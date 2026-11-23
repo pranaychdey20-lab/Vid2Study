@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Vid2Study",
+  "version": "3.0.0",
+  "description": "Turn lecture videos (university LMS, YouTube, local files, captions) into friendly study notes. Transcript, slide detection and OCR run locally; AI only writes the notes.",
+  "permissions": [
+    "downloads",
+    "storage",
+    "unlimitedStorage",
+    "offscreen",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess",
+    "scripting",
+    "activeTab",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "file:///*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Vid2Study",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "cross_origin_embedder_policy": { "value": "require-corp" },
+  "cross_origin_opener_policy": { "value": "same-origin" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["content.css", "results.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

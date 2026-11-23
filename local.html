@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Summarize from a file</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  .drop { border: 2px dashed var(--k); padding: 36px 16px; text-align: center; cursor: pointer; background: var(--g1); }
+  .drop.over { background: var(--y); border-style: solid; }
+  .drop b { display: block; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+  .drop span { font-size: 12px; color: #444; }
+  #fileInfo { margin-top: 10px; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  #prog { margin-top: 16px; }
+  #ptext { font-family: var(--mono); font-size: 12px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="top"><h1>Summarize from a file</h1><p class="sub">Use a lecture video (or just its audio) already on your disk. Keep this tab open while it runs.</p></div>
+<main>
+  <section>
+    <h2>Video</h2>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose or drop an MP4 file">
+      <b>Drop a video or audio file here</b><span>MP4 / M4A work best (read piece by piece, so even 10+ hour files are fine). Or click to choose.</span>
+    </div>
+    <input id="file" type="file" accept="video/mp4,.mp4,.m4a,.wav,.mp3,.aac,.webm,.ogg,.opus,audio/*" hidden>
+    <div id="fileInfo"></div>
+
+    <label for="title">Title</label>
+    <input id="title" type="text" placeholder="Lecture title">
+    <label for="caps">Captions file (optional, .vtt or .srt)</label>
+    <input id="caps" type="file" accept=".vtt,.srt,text/vtt">
+    <div class="hint">With captions the speech does not need to be transcribed on this computer, which saves a lot of time.</div>
+    <label for="course">Course</label>
+    <input id="course" type="text" placeholder="Course name (optional)">
+    <label for="url">Lecture URL (optional)</label>
+    <input id="url" type="url" list="known" placeholder="https://example.edu/…/lecture-01.mp4">
+    <datalist id="known"></datalist>
+    <div class="hint">Give the lecture's CDN URL to store this summary under the same entry as one made from the server. Pick from the list when you have opened the Lectures drawer.</div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button class="primary" id="start" type="button" disabled>Start</button>
+      <button id="cancel" type="button" hidden>Cancel</button>
+      <a class="btn" id="view" target="_blank" rel="noopener" hidden>View</a>
+    </div>
+    <div id="prog" hidden>
+      <div id="ptext"></div>
+      <div class="bar indet" id="bar"><i></i></div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </section>
+</main>
+<script type="module" src="local.js"></script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity log</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --chip: #f6f8fa;
+    --info: #1f6feb; --alert: #9a6700; --alert-bg: #fff8c5; --error: #cf222e; --error-bg: #ffebe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d; --chip: #161b22;
+      --info: #8ab4f8; --alert: #f5c542; --alert-bg: #3d2f00; --error: #ff7b72; --error-bg: #3c1518;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d; --chip: #161b22;
+    --info: #8ab4f8; --alert: #f5c542; --alert-bg: #3d2f00; --error: #ff7b72; --error-bg: #3c1518;
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px; z-index: 1; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input[type=search] { flex: 1 1 220px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--chip); color: var(--fg); }
+  button, select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--chip); color: var(--fg); cursor: pointer; font: inherit; }
+  button.on { border-color: var(--info); color: var(--info); }
+  .count { color: var(--muted); font-size: 12px; }
+  main { padding: 8px 16px 32px; }
+  .row { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+  .row.info { border-left-color: var(--info); }
+  .row.alert { border-left-color: var(--alert); background: var(--alert-bg); }
+  .row.error { border-left-color: var(--error); background: var(--error-bg); }
+  .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+  .lvl { font-weight: 700; text-transform: uppercase; }
+  .row.info .lvl { color: var(--info); }
+  .row.alert .lvl { color: var(--alert); }
+  .row.error .lvl { color: var(--error); }
+  .msg { margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+  pre { margin: 6px 0 0; font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+  details.job { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; background: var(--bg); }
+  details.job.has-error { border-color: var(--error); }
+  details.job.has-alert { border-color: var(--alert); }
+  details.job > summary { cursor: pointer; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; list-style: none; }
+  details.job > summary::-webkit-details-marker { display: none; }
+  details.job > summary::before { content: "\25B8"; color: var(--muted); }
+  details.job[open] > summary::before { content: "\25BE"; }
+  .jtitle { font-weight: 700; flex: 1 1 280px; word-break: break-word; }
+  .jmeta { color: var(--muted); font-size: 12px; }
+  .badges { display: flex; gap: 6px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); text-transform: uppercase; letter-spacing: .03em; }
+  .badge.b-error, .badge.st-failed { color: var(--error); border-color: var(--error); }
+  .badge.b-alert, .badge.st-cancelled, .badge.st-interrupted, .badge.st-paused { color: var(--alert); border-color: var(--alert); }
+  .badge.st-done { color: var(--info); border-color: var(--info); }
+  .badge.st-running { color: var(--info); }
+  .jbody { padding: 0 12px 8px; border-top: 1px solid var(--line); }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  @media (max-width: 600px) { header, main { padding-left: 12px; padding-right: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Activity log</h1>
+  <div class="bar">
+    <input id="q" type="search" placeholder="Search messages and scope">
+    <select id="scope"><option value="">All areas</option></select>
+    <button data-level="all" class="on">All</button>
+    <button data-level="alert">Alerts</button>
+    <button data-level="error">Errors</button>
+    <button id="export">Download .txt</button>
+    <button id="clear">Clear</button>
+    <span class="count" id="count"></span>
+  </div>
+</header>
+<main id="list"><div class="empty">Loading...</div></main>
+<script src="logs.js" type="module"></script>
+</body>
+</html>

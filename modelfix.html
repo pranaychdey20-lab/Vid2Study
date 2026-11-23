@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model did not work</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  main { padding-top: 16px; }
+  .alert-top { background: var(--red); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+  dt { font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; padding-top: 3px; }
+  dd { margin: 0; word-break: break-word; }
+  .reason { margin: 12px 0 0; padding: 8px 10px; border: 2px solid var(--red); background: #fff5f5; color: var(--red); font: 12px/1.45 var(--mono); word-break: break-word; }
+  .advice { margin-top: 10px; font-size: 13px; }
+  .row.btns { margin-top: 14px; }
+  .row.btns button { flex: 1 1 auto; }
+  .msg.ok { color: #0a6b2d; font-weight: 700; }
+  .note { font-size: 12px; color: #444; margin-top: 6px; }
+  #gone { text-align: center; }
+</style>
+</head>
+<body>
+<div class="top alert-top"><h1>Model did not work</h1><p class="sub" id="sub">Your summary is paused. Everything done so far is saved.</p></div>
+<main>
+  <section id="gone" hidden>
+    <p id="goneText">This job is no longer waiting (it was resumed, cancelled or started again).</p>
+    <button type="button" class="primary" id="closeGone">Close</button>
+  </section>
+
+  <div id="content" hidden>
+    <section>
+      <h2>What happened</h2>
+      <dl>
+        <dt>Video</dt><dd id="vTitle"></dd>
+        <dt>Step</dt><dd id="vStage"></dd>
+        <dt>Model</dt><dd id="vModel"></dd>
+      </dl>
+      <div class="reason" id="vReason"></div>
+      <div class="advice" id="vAdvice"></div>
+    </section>
+
+    <section>
+      <h2>Choose the model to use</h2>
+      <div class="note" id="slotNote"></div>
+      <label for="prov">Provider</label>
+      <select id="prov"></select>
+      <label for="pick">Model</label>
+      <select id="pick"></select>
+      <div class="row" style="margin-top:6px">
+        <input type="text" id="model" placeholder="or type a model name" autocomplete="off" spellcheck="false">
+        <button type="button" id="load">Load models</button>
+      </div>
+      <div class="row btns">
+        <button type="button" id="test">Test this model</button>
+      </div>
+      <div class="msg" id="testMsg" role="status"></div>
+      <div class="row btns">
+        <button type="button" class="primary" id="go">Save &amp; continue</button>
+      </div>
+      <div class="note">The model is saved in Options for this role, so the next summaries use it too. The job continues from where it stopped: nothing already done is repeated.</div>
+    </section>
+
+    <section>
+      <h2>Or</h2>
+      <div class="row btns">
+        <button type="button" id="skip" hidden>Skip this step and continue</button>
+        <button type="button" id="cancel">Cancel this job</button>
+      </div>
+      <div class="note" id="skipNote"></div>
+    </section>
+  </div>
+</main>
+<script type="module" src="modelfix.js"></script>
+</body>
+</html>

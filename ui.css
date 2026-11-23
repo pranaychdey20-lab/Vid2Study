@@ -1,0 +1,51 @@
+/* Shared look for extension pages (options, local, results): black and white, zero radius.
+   Same in light and dark mode on purpose. */
+:root {
+  --k: #000; --w: #fff; --g1: #f2f2f2; --g2: #d9d9d9; --g3: #8a8a8a; --y: #FFE500; --red: #E00000;
+  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; border-radius: 0; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--w); color: var(--k); font: 14px/1.5 var(--sans); }
+.mono { font-family: var(--mono); }
+
+.top { background: var(--k); color: var(--w); padding: 12px 20px; }
+.top h1 { margin: 0; font-size: 14px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.top .sub { margin: 2px 0 0; font-size: 12px; color: var(--g2); }
+
+main { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; }
+section { border: 2px solid var(--k); padding: 16px; margin-bottom: 20px; background: var(--w); }
+section > h2 { margin: -16px -16px 14px; padding: 6px 16px; background: var(--g1); border-bottom: 2px solid var(--k); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+
+label { display: block; margin: 14px 0 4px; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+label:first-child, h2 + label { margin-top: 0; }
+label.check { display: flex; gap: 8px; align-items: center; font-size: 12px; letter-spacing: 0; text-transform: none; font-weight: 400; }
+.hint { color: #444; font-size: 12px; margin-top: 4px; }
+input[type=text], input[type=password], input[type=number], input[type=url], select {
+  width: 100%; padding: 8px; border: 2px solid var(--k); background: var(--w); color: var(--k); font: inherit;
+}
+input[type=checkbox] { width: 16px; height: 16px; accent-color: #000; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .row > input { flex: 1; min-width: 160px; }
+
+button, .btn {
+  border: 2px solid var(--k); background: var(--w); color: var(--k); padding: 8px 12px; cursor: pointer;
+  font: 800 11px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; text-decoration: none; display: inline-block;
+}
+button.primary, .btn.primary { background: var(--k); color: var(--w); }
+button:hover:not(:disabled), .btn:hover { background: var(--k); color: var(--w); }
+button.primary:hover:not(:disabled), .btn.primary:hover { background: var(--w); color: var(--k); }
+button:disabled { color: var(--g3); border: 2px dashed var(--g3); background: var(--w); cursor: default; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, .drop:focus-visible {
+  outline: 3px solid var(--y); outline-offset: 2px; box-shadow: 0 0 0 2px var(--k);
+}
+a { color: var(--k); font-weight: 700; }
+
+.msg { font-size: 12px; margin-top: 6px; min-height: 1em; font-family: var(--mono); }
+.msg.bad, .err { color: var(--red); font-weight: 700; }
+
+.bar { height: 8px; border: 2px solid var(--k); background: var(--w); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--y); transition: width .3s; }
+.bar.indet i { width: 25%; border-left: 2px solid var(--k); animation: step 1s steps(4) infinite; }
+@keyframes step { from { margin-left: 0; } to { margin-left: 100%; } }

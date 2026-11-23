@@ -1,0 +1,273 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vid2Study - Options</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  .prov { border: 2px solid var(--k); padding: 12px; margin-bottom: 12px; background: var(--g1); }
+  .prov label { margin-top: 8px; }
+  .prov .row { margin-top: 8px; }
+  .prov h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+  .site { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--g2); padding: 4px 0; font-family: var(--mono); font-size: 12px; }
+  .site button { padding: 3px 8px; }
+</style>
+</head>
+<body>
+<div class="top"><h1>Vid2Study</h1><p class="sub">Settings are stored only in this browser. API keys are sent only to the provider they belong to.</p></div>
+<main>
+  <section>
+    <h2>AI providers</h2>
+    <div id="providers"></div>
+    <div class="row">
+      <select id="preset" style="width:auto;flex:1"></select>
+      <button id="addProv" type="button">Add provider</button>
+    </div>
+    <div class="hint">Paste just the key: the service (Gemini, Groq, OpenAI, Anthropic, OpenRouter, xAI, DeepSeek, Qwen, ...) is recognised from it, and its URL and models are filled in. Services with unrecognisable keys (Mistral, Together, Ollama, your own server) need the URL as well. Providers save automatically; press Save below for the other settings.</div>
+    <div class="hint"><b>Claude CLI (subscription)</b>, <b>Gemini web</b>, <b>Langdock</b> and <b>yt-dlp</b> (YouTube captions, audio and video without playing the video) use your own accounts and tools instead of API keys. They run through a small helper program on this computer. One-time setup: double-click <code>bridge/Start-Bridge.cmd</code>; it installs what is missing and asks you to sign in once. After that, pick the provider from the list below. Its key fills in by itself, and the helper starts on its own when a summary needs it. To set how hard a model thinks, add a level to its name, for example <code>sonnet:high</code>, <code>hydrogen-low</code> or <code>GPT-6.2 Astra:medium</code>.</div>
+    <div class="prov" id="bridgeBox">
+      <h3>Local helper (Claude CLI, Gemini web, Langdock, yt-dlp)</h3>
+      <div class="row"><button type="button" id="bridgeCheck">Check setup</button><button type="button" id="bridgeStart">Start bridge</button><button type="button" id="bridgeStop">Stop bridge</button></div>
+      <label for="bridgeToken">Bridge token (filled in automatically)</label>
+      <input type="password" id="bridgeToken" autocomplete="off" placeholder="from bridge/token.txt">
+      <label for="ldCookie">Langdock cookie (instead of signing in): DevTools > Network > any request to app.langdock.com > Request Headers > cookie > copy the value. It stays on this computer.</label>
+      <div class="row"><input type="password" id="ldCookie" autocomplete="off" placeholder="paste the cookie value"><button type="button" id="ldCookieSave">Save cookie</button></div>
+      <div id="bridgeList"></div>
+      <div class="msg" id="bridgeMsg"></div>
+      <div class="hint">"Start bridge" starts the helper now and "Stop bridge" stops it; it also starts by itself when a summary needs it. If the button says the helper is not set up, run <code>bridge/Start-Bridge.cmd</code> once (Windows), then reload the extension. yt-dlp needs no setting: YouTube summaries use it by themselves when the page gives no captions or its own download fails, and the bridge refreshes it once a week (<b>Update now</b> forces it).</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How lectures are analysed</h2>
+    <label for="engine">Engine</label>
+    <select id="engine">
+      <option value="local">Local analysis + AI notes (recommended, far fewer tokens)</option>
+      <option value="gemini">Legacy: Gemini watches the whole video (many tokens)</option>
+    </select>
+    <div class="hint">Local analysis does the heavy work on this computer with plain algorithms: captions or Whisper speech-to-text, slide-change detection, OCR. AI is used only to write the notes. Videos up to the "short video" limit are written by the Strong AI in one pass. Longer ones are summarised chunk by chunk by the Cheap AI, then merged by the Strong AI. Any provider and model can be used in any slot, and the same one in several.</div>
+    <label class="check"><input id="downloadFirst" type="checkbox"> YouTube: download the streams first, then process (much faster)</label>
+    <div class="hint">Downloads the audio and a low-res video from YouTube in parallel and transcribes and scans at full speed instead of playback speed: a long lecture that took hours while listening finishes in minutes. Falls back to listening through the page player when a download fails (DRM, expired URL). Uncheck to always listen live.</div>
+    <label for="downloadMaxHours">Download first only for videos up to (hours)</label>
+    <input id="downloadMaxHours" type="number" min="0" max="48" step="0.5">
+    <div class="hint">Longer videos (e.g. a 12-hour stream) are heard through the page player and their slides are grabbed in the same pass instead of being downloaded, which keeps memory use small. 0 = no limit.</div>
+  </section>
+
+  <div id="localSlots">
+  <section>
+    <h2>Cheap AI</h2>
+    <label for="cheapProv">Provider</label>
+    <select id="cheapProv"></select>
+    <label for="cheapModelPick">Model</label>
+    <select id="cheapModelPick"></select>
+    <input id="cheapModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name (e.g. gemini-2.5-flash-lite, claude-haiku, llama3.1 on Ollama)">
+    <div class="hint">Summarises each 10-15 minute chunk of a long lecture into bullet notes. Used only for lectures longer than the short-video limit. A small or local model is fine. If left on "Same as Strong AI" the strong model does these too.</div>
+  </section>
+
+  <section>
+    <h2>Cheap AI fallbacks (optional)</h2>
+    <div id="cheapPool"></div>
+    <div class="row" style="margin-top:6px"><button type="button" id="addCheap">Add a fallback model</button></div>
+    <div class="hint">The Cheap AI is a pool. If the model above fails (rate limit, quota, outage), the next one here answers, then the next, in this order, as many as you add. Also used by the Vision, Video type and Transcript summary AIs when those are left empty. The job pauses only when every model in the pool has failed.</div>
+  </section>
+
+  <section>
+    <h2>Strong AI</h2>
+    <label for="strongProv">Provider</label>
+    <select id="strongProv"></select>
+    <label for="strongModelPick">Model</label>
+    <select id="strongModelPick"></select>
+    <input id="strongModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name">
+    <div class="hint">Writes the final notes: reviews and merges the chunk bullets, fixes mistakes, adds easy examples (as code for programming lectures), the overview and the exam hints. Writes the whole thing itself for short lectures.</div>
+  </section>
+
+  <section>
+    <h2>Strong AI pool: second model (optional)</h2>
+    <label for="strongFbProv">Provider</label>
+    <select id="strongFbProv"></select>
+    <label for="strongFbModelPick">Model</label>
+    <select id="strongFbModelPick"></select>
+    <input id="strongFbModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name">
+    <div class="hint">The Strong AI is a pool of at most two models: the one above, and this one. If the first fails (rate limit, quota, outage), this one writes instead. Empty = no second model; the job pauses when the first fails.</div>
+  </section>
+
+  <section>
+    <h2>Vision AI</h2>
+    <label for="visionProv">Provider</label>
+    <select id="visionProv"></select>
+    <label for="visionModelPick">Model</label>
+    <select id="visionModelPick"></select>
+    <input id="visionModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name (must accept images)">
+    <label class="check"><input id="useVision" type="checkbox"> Describe diagram / chart / board frames with the Vision AI</label>
+    <div class="hint">Never the whole video. Each captured frame is classified on this computer (OCR layout + edge analysis, no AI): frames that look like <b>code, tables, diagrams/charts or equations</b> are sent however much text they hold, plus frames with very little text (boards, drawings). Plain text slides are read by OCR for free. Flagged frames are always placed in the notes and the PDF.</div>
+  </section>
+
+  <section>
+    <h2>Transcript AI</h2>
+    <label for="digestProv">Provider</label>
+    <select id="digestProv"></select>
+    <label for="digestModelPick">Model</label>
+    <select id="digestModelPick"></select>
+    <input id="digestModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name">
+    <div class="hint">Always used (for videos with frames), BEFORE the vision calls. It reads the whole transcript, together with up to 6 frames spread from the start to the end of the video (if the model takes images), and gives three things: (1) a brief summary, sent with all the frames to the screening call; (2) a shortened but detailed timeline with timestamps, sent to the describing calls; (3) the video type (technical, or a story / history / religion video), which decides what a valuable frame is. The Strong AI always gets the full trimmed transcript, never these summaries. Empty = the Cheap AI (pool).</div>
+    <label for="screenInPerHour">Frames the code sends to the screening AI (per hour of video, at most)</label>
+    <input id="screenInPerHour" type="number" min="20" max="1500" step="20">
+    <div class="hint">First the code (no AI) merges repeats, drops blank frames and plain text slides that OCR already read, and keeps at most this many of the rest, spread over the whole video. Only those go to the screening AI, which cuts them further to the important ones.</div>
+    <label for="screenImages">Most frames in one screening call (more frames = more calls)</label>
+    <input id="screenImages" type="number" min="50" max="3000" step="50">
+    <label for="maxRequestMB">Most MB of pictures in one vision request (0 = automatic)</label>
+    <input id="maxRequestMB" type="number" min="0" max="200" step="5">
+    <div class="hint">Automatic: about 85 MB for Gemini, 17 MB for other services. The pictures are shrunk or split into more calls to stay under it. Lower it if a service answers "request too large".</div>
+    <label for="screenKeepPerHour">Frames kept by the screening call (per hour of video, at most)</label>
+    <input id="screenKeepPerHour" type="number" min="10" max="600" step="10">
+    <div class="hint">The Vision AI first looks at ALL the frames at low quality in one call (Gemini Flash-Lite takes thousands), throws away the useless and repeated ones and keeps the important ones. Those are then sent again in high quality to be ranked and described.</div>
+  </section>
+
+  <section>
+    <h2>Speech-to-text AI (optional)</h2>
+    <label for="sttProv">Provider</label>
+    <select id="sttProv"></select>
+    <label for="sttModelPick">Model</label>
+    <select id="sttModelPick"></select>
+    <input id="sttModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="e.g. whisper-large-v3-turbo (Groq) or whisper-1 (OpenAI)">
+    <div class="hint">Used only when a video has no captions. Default: Whisper runs on this computer (free, private, but slow: hours for a very long video). Choose a provider with a Whisper endpoint (Groq, OpenAI, or any OpenAI-compatible service) and the audio is sent there in 10-minute pieces instead: a 12-hour lecture takes minutes and costs well under a dollar on Groq. <b>This is the only setting that sends audio off this computer.</b> Works for files and for YouTube videos heard from the tab.</div>
+  </section>
+
+  <section>
+    <h2>Analysis tuning</h2>
+    <label for="sceneThreshold">Slide-change sensitivity (0.005 - 0.9)</label>
+    <input id="sceneThreshold" type="number" min="0.005" max="0.9" step="0.005">
+    <div class="hint">The fraction of the picture that must change to count as a new slide. Lower it if slides are missed, raise it if you get many near-duplicates. (This is not ffmpeg's scale: a change to another text slide moves only a few percent of the pixels, so the default is 0.05 here, not 0.3.)</div>
+    <label for="sampleSeconds">Look at the video every (seconds)</label>
+    <input id="sampleSeconds" type="number" min="1" max="60" step="1">
+    <label for="maxScenes">Most slide changes kept</label>
+    <input id="maxScenes" type="number" min="10" max="3000" step="10">
+    <label for="ocrMinWords">Also send frames with fewer OCR words than</label>
+    <input id="ocrMinWords" type="number" min="0" max="200" step="1">
+    <label for="maxVision">Most frames sent to the Vision AI per lecture</label>
+    <input id="maxVision" type="number" min="0" max="300" step="1">
+    <label for="chunkMinutes">Chunk length for long lectures (minutes)</label>
+    <input id="chunkMinutes" type="number" min="5" max="30" step="1">
+    <label for="shortVideoMinutes">Short video limit (minutes): up to this the Strong AI does everything</label>
+    <input id="shortVideoMinutes" type="number" min="0" max="240" step="5">
+    <label class="check"><input id="writeFullTranscript" type="checkbox"> Longer videos: the Strong AI reads the full transcript (in 2-3 parts)</label>
+    <div class="hint">On: nothing is summarised by the Cheap AI first, so no detail is lost (costs more input tokens). Off: the Cheap AI turns each part into bullets first and the Strong AI writes from those.</div>
+    <label for="trimTokens">Tighten the transcript with the Cheap AI above (tokens, 0 = never)</label>
+    <input id="trimTokens" type="number" min="0" max="1000000" step="5000">
+    <div class="hint">Fillers, stutters and repeated lines are always removed by code (no AI, nothing of meaning lost). Only a transcript still longer than this (40000 ≈ 3 hours of speech) is also tightened by the Cheap AI, which may drop only repetition and rambling.</div>
+    <label class="check"><input id="debugDump" type="checkbox"> Save a debug dump with every result (temporary, for testing)</label>
+    <label for="scanRefine">Slide scan: read every Nth sample first (1 = every sample)</label>
+    <input id="scanRefine" type="number" min="1" max="3" step="1">
+    <div class="hint">2 (default): reads every 2nd sample and fills in the ones between wherever the picture changed, so anything on screen for at least two samples (4 s at the default) is always found. 1 = read every sample, slowest, catches even a 2 s flash.</div>
+    <label for="asrModel">Speech-to-text model (used when there are no captions)</label>
+    <select id="asrModel">
+      <option value="tiny">Tiny (fastest, least accurate)</option>
+      <option value="base">Base (balanced)</option>
+      <option value="small">Small (slowest, most accurate)</option>
+    </select>
+    <label for="asrLanguage">Spoken language (en, hi, es, ...)</label>
+    <input id="asrLanguage" type="text" maxlength="12">
+    <div class="hint">Use <b>en</b> for English lectures (fastest, most accurate). Use <b>hinglish</b> when the teacher mixes Hindi and English: the Hindi parts are transcribed and the notes are always written in English. Other options: a language code such as <b>hi</b> or <b>es</b>, or <b>auto</b> to detect it. Anything other than <b>en</b> uses the larger multilingual speech model: pick <b>Small</b> above for Hindi, because Tiny and Base are weak at it. A cloud speech-to-text provider (Groq) is far better at Hindi than any local model.</div>
+    <label for="listenSpeed">YouTube without captions: listen at (x speed)</label>
+    <input id="listenSpeed" type="number" min="1" max="4" step="0.5">
+    <div class="hint">With no captions the extension plays the video on the YouTube tab, muted, at this speed and transcribes what it hears. 2x halves the wait; use 1 if the transcript is poor. Keep the tab open and leave the player alone until it finishes.</div>
+    <div class="hint">The speech model (40-250 MB) is downloaded once and kept by the browser. Audio never leaves this computer.</div>
+  </section>
+  </div>
+
+  <div id="legacy">
+  <section>
+    <h2>Video AI (legacy Gemini engine)</h2>
+    <label for="videoProv">Provider (must be Gemini: only Gemini can watch a video)</label>
+    <select id="videoProv"></select>
+    <label for="videoModelPick">Model</label>
+    <select id="videoModelPick"></select>
+    <input id="videoModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="or type a model name"> 
+    <label for="thinkingLevel">Thinking level (Gemini)</label>
+    <select id="thinkingLevel"></select>
+    <label for="mediaResolution">Video detail sent to Gemini</label>
+    <select id="mediaResolution">
+      <option value="MEDIA_RESOLUTION_LOW">Low (about 3x fewer tokens, fits free-tier limits)</option>
+      <option value="MEDIA_RESOLUTION_MEDIUM">Medium</option>
+      <option value="AUTO">Default (most detail; long lectures may hit limits)</option>
+    </select>
+    <div class="hint">Screenshots are always taken from the original video at full quality. This only affects how well the AI reads small text on slides. If a model reports high demand (503), pick another one and retry.</div>
+  </section>
+
+  <section>
+    <h2>Notes AI (legacy Gemini engine)</h2>
+    <label for="notesProv">Provider (any)</label>
+    <select id="notesProv"></select>
+    <label for="notesModelPick">Model</label>
+    <select id="notesModelPick"></select>
+    <input id="notesModel" style="margin-top:6px" type="text" autocomplete="off" placeholder="gemini-2.5-flash">
+    <div class="hint">Writes the notes and the caption-only summaries. Text only, so a cheap model works well.</div>
+  </section>
+  </div>
+
+  <section>
+    <h2>Output</h2>
+    <label for="detail">Detail level</label>
+    <select id="detail">
+      <option value="brief">Brief</option>
+      <option value="standard">Standard</option>
+      <option value="deep">Deep</option>
+    </select>
+    <label for="writerImages">Pictures sent to the Strong AI with the notes request (0 = none)</label>
+    <input id="writerImages" type="number" min="0" max="20" step="1">
+    <div class="hint">The most informative frames (diagrams, code, tables, formulas first) go to the writer as images, so it explains what it actually sees. Each picture costs about 1-2 k input tokens on paid APIs; free with Gemini web (10 at most) or the Claude CLI. A model without vision just gets the text descriptions.</div>
+    <label class="check"><input id="researchReferences" type="checkbox"> Keep references separate and research them (books, papers, films, sources, quotes)</label>
+    <div class="hint">Every book, paper, film, person cited as a source or website that is mentioned (said or shown on screen) is noted where it comes up, and listed in its own "References" section with background found by a web search (uses the web search setting below). On-screen quotes always get their own callout.</div>
+    <label class="check"><input id="practiceQuestions" type="checkbox"> Add hard practice questions with worked answers for every topic</label>
+    <div class="hint">IIT / GATE-level problems for theory and maths, LeetCode / interview-level problems for coding, each solved step by step. Written by the Strong AI (one extra call), using web results when web search is on.</div>
+    <label class="check"><input id="webSearch" type="checkbox"> Let the writer search the web (when its model supports it)</label>
+    <div class="hint">Checks names and facts and adds short background. Gemini (Google Search), Anthropic and OpenRouter models search by themselves. For every other model (Groq, OpenAI, DeepSeek, Ollama, ...) the extension searches DuckDuckGo and Wikipedia itself, with no key, and gives the writer the results. Search may cost extra on some plans.</div>
+    <label for="maxFrames">Max figures in the notes and PDF, per hour of lecture (default 10)</label>
+    <input id="maxFrames" type="number" min="1" max="60" step="1">
+    <div class="hint">A cap, not a target: only frames the Strong AI placed, or important frames (maps, charts, diagrams, tables, code, formulas the vision model rated well) are shown, so a long video with two important frames gets two.</div>
+    <label for="maxWidth">Image max width (px)</label>
+    <input id="maxWidth" type="number" min="480" max="3840" step="10">
+    <label class="check"><input id="deleteAfter" type="checkbox"> Delete the uploaded video from Gemini after use</label>
+  </section>
+
+  <section>
+    <h2>Sites</h2>
+    <label class="check"><input id="enabled" type="checkbox"> Extension on (all sites)</label>
+    <div id="sites" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:8px"><input id="newSite" type="text" placeholder="example.edu"><button id="addSite" type="button">Add</button></div>
+    <div class="hint">The Notes button only appears on these sites. You can also enable the current site from the toolbar icon.</div>
+  </section>
+
+  <section id="fileHint" hidden>
+    <h2>Local files</h2>
+    <div class="hint" style="margin-top:0">Summaries can read lectures already saved on this computer instead of downloading them again. This needs "Allow access to file URLs" turned on for this extension.</div>
+    <div class="row" style="margin-top:8px"><button id="openExt" type="button">Open extension settings</button></div>
+  </section>
+
+  <section>
+    <h2>Other</h2>
+    <a class="btn" href="local.html">Summarize from a file...</a>
+    <div class="hint">Pick a video from your disk and summarize it without any website.</div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button class="primary" id="save" type="button">Save</button>
+      <span class="msg" id="saveMsg"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Saved summaries</h2>
+    <div class="hint" id="cacheInfo">Calculating...</div>
+    <div class="row" style="margin-top:8px"><button id="library" type="button">View saved notes</button><button id="clear" type="button">Clear cache</button><span class="msg" id="clearMsg"></span></div>
+  </section>
+  <section>
+    <h2>Activity log</h2>
+    <div class="hint">Every step, retry, skipped download and error behind the scenes, with timestamps. Red = error, yellow = alert (something skipped, retried, or limited). Stored on this computer only, last 1500 entries.</div>
+    <p><a href="logs.html" target="_blank">Open the activity log</a></p>
+  </section>
+</main>
+<script type="module" src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Vid2Study</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  body { width: 320px; font-size: 13px; }
+  .top { padding: 10px 14px; } .top h1 { font-size: 12px; }
+  .body { padding: 14px; display: grid; gap: 12px; }
+  .site { font-family: var(--mono); font-size: 12px; word-break: break-all; border: 2px solid var(--k); padding: 6px 8px; background: var(--g1); }
+  label.check { margin: 0; }
+  .msg { min-height: 1em; margin: 0; }
+  .row button { flex: 1; }
+</style>
+</head>
+<body>
+<div class="top"><h1>Vid2Study</h1></div>
+<div class="body">
+  <div class="site" id="site">...</div>
+  <label class="check"><input type="checkbox" id="siteOn"> Enable on this site</label>
+  <div class="row"><button id="scan" class="primary" type="button">Scan this page now</button></div>
+  <label class="check"><input type="checkbox" id="globalOn"> Extension on (all sites)</label>
+  <div class="row"><button id="lib" type="button">Saved notes</button><button id="opts" type="button">Options</button></div>
+  <p class="msg" id="msg"></p>
+</div>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

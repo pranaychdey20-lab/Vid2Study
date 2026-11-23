@@ -1,0 +1,11 @@
+{
+  "name": "vid2study",
+  "private": true,
+  "license": "MIT",
+  "version": "3.0.0",
+  "type": "module",
+  "description": "Chrome MV3 extension (no build step). package.json exists only so Node can run the tests: Chrome ignores it.",
+  "scripts": {
+    "test": "node tests/run.mjs"
+  }
+}

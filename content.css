@@ -1,0 +1,114 @@
+/* Loaded inside the extension's Shadow DOM, so it cannot leak into the LMS (and vice versa).
+   Black and white, zero radius, hard shadows. Same look on dark and light pages. */
+:host { all: initial; }
+* { box-sizing: border-box; border-radius: 0; }
+[hidden] { display: none !important; }
+
+.wrap {
+  --k: #000; --w: #fff; --g1: #f2f2f2; --g2: #d9d9d9; --g3: #8a8a8a; --y: #FFE500; --red: #E00000;
+  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font: 13px/1.4 var(--sans);
+  color: var(--k);
+}
+.wrap :where(button, select, input) { font: inherit; color: inherit; }
+
+/* ---- shared controls ---- */
+.lbl { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.mono { font-family: var(--mono); }
+.btn {
+  border: 2px solid var(--k); background: var(--w); color: var(--k); padding: 6px 10px; cursor: pointer;
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+}
+.btn.primary { background: var(--k); color: var(--w); }
+.btn:hover:not(:disabled) { background: var(--k); color: var(--w); }
+.btn.primary:hover:not(:disabled) { background: var(--w); color: var(--k); }
+.btn:disabled { color: var(--g3); border: 2px dashed var(--g3); background: var(--w); cursor: default; }
+.btn:focus-visible, .x:focus-visible, .tab:focus-visible, select:focus-visible, input:focus-visible, .link:focus-visible {
+  outline: 3px solid var(--y); outline-offset: 2px; box-shadow: 0 0 0 2px var(--k);
+}
+.x { border: 0; background: transparent; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; font-weight: 800; }
+.link { background: none; border: 0; padding: 0; cursor: pointer; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; text-decoration: underline; }
+
+.bar { height: 8px; border: 2px solid var(--k); background: var(--w); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--y); transition: width .3s; }
+.bar.indet i { width: 25%; animation: step 1s steps(4) infinite; border-left: 2px solid var(--k); }
+@keyframes step { from { margin-left: 0; } to { margin-left: 100%; } }
+.err { color: var(--red); font-weight: 700; word-break: break-word; }
+
+/* ---- floating card ---- */
+.card {
+  position: fixed; right: 20px; bottom: 20px; width: 280px; z-index: 2147483646;
+  background: var(--w); border: 2px solid var(--k); outline: 1px solid var(--w);
+  box-shadow: 4px 4px 0 var(--k); padding: 0 0 12px;
+}
+.head { display: flex; align-items: center; justify-content: space-between; cursor: move; user-select: none; background: var(--k); color: var(--w); padding: 6px 8px 6px 12px; margin-bottom: 10px; }
+.head b { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.card > :not(.head) { margin-left: 12px; margin-right: 12px; }
+.pick { width: calc(100% - 24px); margin-bottom: 8px; padding: 5px; border: 2px solid var(--k); background: var(--w); }
+.name { color: #444; font-size: 12px; margin-bottom: 10px; word-break: break-word; }
+.btns { display: flex; gap: 6px; }
+.btns .btn { flex: 1; padding: 8px 4px; }
+.regen { display: inline-block; margin-top: 8px; }
+.prog { margin-top: 10px; }
+.ptext { font-family: var(--mono); font-size: 11px; margin-bottom: 4px; }
+.cancel { margin-top: 6px; color: var(--red); }
+.card .err { margin-top: 8px; font-size: 12px; }
+
+/* ---- launcher + drawer ---- */
+.tab {
+  position: fixed; right: 0; top: 40%; z-index: 2147483645; width: 30px; padding: 14px 0;
+  background: var(--k); color: var(--w); border: 0; outline: 1px solid var(--w); cursor: pointer;
+  writing-mode: vertical-rl; font-size: 11px; font-weight: 800; letter-spacing: .24em;
+}
+.tab:hover { background: var(--y); color: var(--k); }
+.drawer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: 420px; max-width: 100vw; z-index: 2147483646;
+  background: var(--w); border-left: 2px solid var(--k); outline: 1px solid var(--w); box-shadow: -4px 4px 0 var(--k);
+  display: flex; flex-direction: column;
+}
+.dhead { display: flex; align-items: center; justify-content: space-between; background: var(--k); color: var(--w); padding: 8px 8px 8px 14px; }
+.dhead b { font-size: 12px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.dsub { padding: 8px 14px; border-bottom: 2px solid var(--k); font-size: 12px; display: flex; justify-content: space-between; gap: 8px; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 2px solid var(--k); background: var(--g1); }
+.tools .btn { padding: 5px 8px; font-size: 10px; }
+.list { flex: 1; overflow-y: auto; padding-bottom: 20px; }
+.list .msg { padding: 20px 14px; }
+.mod { margin: 0; padding: 14px 14px 4px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; border-top: 3px solid var(--k); }
+.mod:first-child { border-top: 0; }
+.chap { margin: 0; padding: 6px 14px 4px; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--g3); }
+.row { display: grid; grid-template-columns: 22px 1fr; gap: 2px 8px; padding: 8px 14px; border-top: 1px solid var(--g2); }
+.row.active { background: var(--y); }
+.row input[type=checkbox] { width: 16px; height: 16px; margin: 2px 0 0; accent-color: #000; }
+.rtitle { font-weight: 700; word-break: break-word; }
+.rdur { font-family: var(--mono); font-size: 11px; color: #444; margin-left: 6px; font-weight: 400; }
+.rstat { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tag { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .06em; border: 1px solid var(--k); padding: 1px 5px; background: var(--w); }
+.tag.on { background: var(--k); color: var(--w); }
+.tag.bad { color: var(--red); border-color: var(--red); }
+.rbtns { grid-column: 2; display: flex; gap: 4px; flex-wrap: wrap; }
+.rbtns .btn { padding: 3px 7px; font-size: 10px; }
+.rline { grid-column: 2; font-family: var(--mono); font-size: 11px; }
+.row .bar { grid-column: 2; }
+.rerr { grid-column: 2; font-size: 11px; }
+
+/* ---- results panel ---- */
+.panel {
+  position: fixed; top: 0; right: 0; height: 100vh; width: 480px; max-width: 100vw; z-index: 2147483647;
+  background: var(--w); border-left: 2px solid var(--k); outline: 1px solid var(--w); box-shadow: -4px 4px 0 var(--k);
+  display: flex; flex-direction: column;
+}
+.phead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 14px; background: var(--k); color: var(--w); }
+.ptitle { font-weight: 800; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel iframe { flex: 1; border: 0; width: 100%; background: var(--w); }
+
+/* ---- pill, notes, capture banner ---- */
+.pill { position: fixed; right: 20px; bottom: 20px; z-index: 2147483646; padding: 8px 16px; outline: 1px solid var(--w); box-shadow: 4px 4px 0 var(--k); }
+.btns.sub { margin-top: 6px; }
+.btns.sub .btn { padding: 6px 4px; }
+.card .note { margin-bottom: 8px; font-size: 12px; }
+.banner {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2147483647;
+  background: var(--y); color: var(--k); border: 2px solid var(--k); box-shadow: 4px 4px 0 var(--k);
+  padding: 8px 14px; font-weight: 800; font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+}

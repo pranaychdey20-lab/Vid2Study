@@ -1,0 +1,15 @@
+{
+  "name": "vid2study-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local helper for the extension: Claude CLI (subscription) and Gemini web (headless). Not part of the extension itself.",
+  "scripts": {
+    "start": "node server.mjs",
+    "login": "node login.mjs",
+    "login-langdock": "node login-langdock.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}
