@@ -4,7 +4,7 @@
 
 ### Turn any lecture video into **study notes you actually want to read**
 
-*Local-first. AI only writes. Every diagram, quote, formula and source stays in.*
+*Local transcript, slide scanning and OCR, with configurable AI for the notes.*
 
 <br>
 
@@ -13,7 +13,7 @@
 ![Local first](https://img.shields.io/badge/transcript%20·%20OCR%20·%20slides-run%20locally-2ea44f?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/npm%20test-22%20suites-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)
-![Providers](https://img.shields.io/badge/AI-Gemini%20·%20OpenAI--compatible%20·%20Anthropic%20·%20Claude%20CLI-8A2BE2?style=for-the-badge)
+![Providers](https://img.shields.io/badge/AI-Gemini%20·%20OpenAI--compatible%20·%20Anthropic%20·%20Codex%20CLI%20·%20Claude%20CLI%20·%20Langdock-8A2BE2?style=for-the-badge)
 
 **[✨ What you get](#-what-you-get)** · **[🧠 How it works](#-how-it-works)** · **[🎭 Who does what](#-who-does-what-cheap-vs-strong)** · **[🚀 Install](#-install-in-2-minutes)** · **[🖱 Using it](#-using-it)** · **[🔒 Privacy](#-privacy-and-safety)**
 
@@ -23,26 +23,26 @@
 
 ## ✨ What you get
 
-You point it at a lecture. It hands you back notes with the **why before the how**, a worked example for every idea, real LaTeX maths, code that shows its output, step-by-step diagrams for algorithms, the slides that matter in the right place, every **quote** and **source** the speaker names, and **hard practice questions** that fit the subject.
+Turn a lecture into study notes with plain-English explanations, typeset equations, slide figures, references, and worked practice questions. The lecture transcript and slides ground the main notes.
 
 | | |
 |---|---|
-| 🧾 **Easy first** | Hard ideas are explained in plain words, then precisely, with an example a newcomer can follow. Short punchy lines, a bit of humour, zero filler. |
+| 🧾 **Easy first** | An **Explanation** box sits directly below a term or slide bullet the lecture mentions without elaborating. **Extra Context** boxes label material beyond the lecture. |
 | ➗ **Real maths** | Every formula is LaTeX (KaTeX, bundled). Derivations are solved step by step with the reason for each step, and each symbol is defined. |
 | 💻 **Code that runs** | Every code block is followed by its **Output**. Algorithms (sorting, searching, BFS/DFS, Dijkstra…) are *executed* and drawn phase by phase. |
 | 🖼 **Figures in the right place** | Diagrams, charts, tables, code and formulas are never dropped. Other frames appear only when the writer decides the notes need them. |
-| 💬 **Quotes, kept apart** | A quote shown on screen always gets its own `> **Quote:**` callout, at the moment it appears. |
+| 💬 **Quotes, kept apart** | Slide definitions and quotations can appear in labelled callouts. The extension checks verbatim excerpts against the captured OCR. |
 | 📚 **Sources and references** | Books, papers, films, documents and cited people are noted where they come up and collected in a **References** section, with background found by a web search. |
-| 🧠 **Practice questions that fit** | JEE/GATE-style numericals for maths and physics, LeetCode/FAANG problems for code, *understanding* questions for history and religion. The writer judges what fits. |
+| 🧠 **Practice questions that fit** | Pick a dedicated **Practice Paper AI** for lecture-grounded questions and worked answers with references back to the notes. |
 | 📦 **Bulk notes** | On a university LMS course page, tick a whole week (or "Without notes") and queue every lecture at once. |
 | 🛟 **Never loses your work** | Everything is saved as it goes. If a model fails the job **pauses**, you pick another model, and it resumes from where it stopped. |
-| 🖨 **Takes it with you** | Copy as text (raw LaTeX), a `.zip` that works offline, or print to a clean PDF. |
+| 🖨 **Takes it with you** | Copy the notes, download an offline ZIP, or print a PDF with a separate clickable contents page and linked practice-answer references. |
 
 ---
 
 ## 🧠 How it works
 
-> **The one idea:** heavy work happens on *your computer* with plain algorithms. A model only ever sees what it needs, and the expensive one only does the writing.
+The browser handles slide scanning, OCR, and local transcription. The models you select help describe the slides, write the notes, and create practice questions.
 
 ```mermaid
 flowchart LR
@@ -58,7 +58,7 @@ flowchart LR
     V2 --> W["✍️ Strong AI writes the notes<br/>10 best frames attached as pictures"]
     W --> P["🧽 Cheap AI polish<br/>maths · overview · code outputs"]
     P --> R["📚 References + 💬 Quotes<br/>web research"]
-    R --> Q["🎯 Practice questions<br/>fit to the subject"]
+    R --> Q["🎯 Practice Paper AI<br/>lecture-grounded questions and answers"]
     Q --> N([📄 Notes: web page · zip · PDF])
 ```
 
@@ -75,7 +75,7 @@ flowchart LR
 6. **Transcript AI.** One model reads the whole transcript (plus six frames from start to end) and returns a **brief**, a detailed **timeline**, the **video type** (technical or not) and every **source** mentioned.
 7. **Vision, in very few calls.** *Call 1* looks at **all** candidate frames at low quality in one request (thousands fit) and drops repeats, blur, titles and half-drawn animation states. A code check rescues any drop that names no replacement. *Calls 2* (at most two) look at the survivors in high quality, with the transcript timeline, and rank and describe each in lossless detail. Every image is labelled in three ways (a text line, the id printed on the picture, the prompt list) so captions can never slip onto a neighbouring frame.
 8. **Write.** Up to 60 minutes the **Strong AI** writes everything in one pass; longer lectures it reads the full transcript in 2–3 parts. The ten best frames are attached as **pictures**; every other frame is offered as a description, and it adds one only if it finds it necessary, in one compact line the code places.
-9. **Finish.** Maths is fixed in one batched call, the overview and code outputs come from the Cheap AI, quotes are guaranteed, the References section is written, and practice questions are added when the subject calls for them.
+9. **Finish.** The Cheap AI can polish equations, the overview, and code outputs. The extension assembles the references and figures, adds practice questions if enabled, and records which model actually wrote each part after any fallback.
 
 </details>
 
@@ -87,10 +87,11 @@ Slots can use **any provider and model**. Empty slots fall back sensibly, so you
 
 | Slot | Job | Good choices | If empty |
 |---|---|---|---|
-| ✍️ **Strong AI** *(+ one fallback)* | Writes the notes, the References section and the practice questions | a top-tier model (Claude Sonnet, Gemini Pro/"neon"…) | required |
+| ✍️ **Strong AI** *(+ one fallback)* | Writes the notes and References section | a top-tier model (Claude Sonnet, Gemini Pro/"neon"…) | required |
 | 🪙 **Cheap AI** *(+ any number of fallbacks)* | Trims very long transcripts, fixes maths, writes the overview, predicts code outputs | Gemini Flash-Lite, Haiku, a local Ollama model | the Strong AI |
 | 👁 **Vision AI** | Screens and describes frames (many images per call) | Gemini Flash-Lite (takes thousands of images) | the Cheap AI |
 | 📝 **Transcript AI** | Brief, timeline, video type and sources from the transcript + 6 frames | a cheap long-context model | the Cheap AI |
+| 🎯 **Practice Paper AI** | Writes lecture-grounded questions and worked answers | a model that accepts the transcript and slide images | the Strong AI |
 | 🎙 **Speech-to-text** | Transcribes audio when there are no captions | Groq `whisper-large-v3-turbo` | Whisper on your computer |
 
 The **Cheap AI is a pool**: if one model fails (rate limit, quota, outage) the next one answers, in the order you list them. The **Strong AI** is a pool of two. A model that answers 401/403/404 is skipped for the rest of the run, and the job only pauses when every model in a pool has failed.
@@ -99,26 +100,18 @@ The **Cheap AI is a pool**: if one model fails (rate limit, quota, outage) the n
 
 ## 📝 What the notes look like
 
+The print view starts with a separate contents page with learning outcomes and a clickable lecture roadmap. Sections use slide excerpts, figures, tables, and typeset equations where relevant. Practice answers can link to a numbered section and show its page number in the print view.
+
 ```markdown
-### The Night Berlin Split (00:00)
-> **Quote:** “Forget not the tyranny of this wall ... nor the love of freedom that made it fall ...” — Unknown, Graffiti on the Berlin Wall
+### Gear Types and Mechanical Power Transmission (07:20)
 
-- **Big idea:** On August 13, 1961, East Germany sealed off Berlin overnight.
-- **Key points:**
-  - Construction kept going for a decade, slicing through neighbourhoods.
-  - The Wall divided Germany and symbolised a split world.
+- Backlash can affect positioning when the gearbox reverses direction.
 
-![Figure 1: The Berlin Wall dividing a city street](images/fig1.png)
-
-> **Source:** *The Basic Treaty of 1972* — FRG & GDR (West Germany recognised East Germany)
-> **Watch out:** the Wall kept people *in*, it was never built to keep an army out.
-> **Quick check:** why did a wall through a city beat a fence along a border?
-
-## References
-- **The Basic Treaty of 1972** — treaty between the two Germanys: ...
+> **Explanation:** Backlash is the small amount of play between meshing teeth.
+> When the gears reverse, the driving tooth crosses that gap before it starts pushing again.
 ```
 
-Callouts you will meet: `Example` · `Extra example` · `Analogy` · `Extra (beyond the lecture)` · `Watch out` · `Quick check` · `Shortcut` · `Quote` · `Source` · `Unclear`.
+The writer adds an **Explanation** box immediately after an item the lecture leaves unexplained. **Extra Context** labels related material beyond the lecture.
 
 ---
 
@@ -129,8 +122,8 @@ Callouts you will meet: `Example` · `Extra example` · `Analogy` · `Extra (bey
    git clone https://github.com/pranaychdey20-lab/Vid2Study.git
    ```
 2. Open `chrome://extensions`, switch on **Developer mode**, click **Load unpacked**, and choose the folder that contains `manifest.json`.
-3. Click the toolbar icon → **Options** → **AI providers**. **Paste just a key**: the service is recognised from its format (Gemini `AIza…`, Groq `gsk_…`, Anthropic `sk-ant-…`, OpenAI `sk-…`) and its models load by themselves.
-4. Pick your **Strong**, **Cheap**, **Vision** (and optionally **Transcript**, **Speech-to-text**) models and save.
+3. Click the toolbar icon → **Options** → **AI providers**. Add a provider and enter its API key, or follow the local bridge setup below for subscription sign-ins.
+4. Pick a **Strong AI** model. Set the other roles as needed and click **Save**, including **Practice Paper AI** if you want a separate question writer. Each Cheap AI fallback has a model list for its own provider.
 5. *(Optional)* In the extension's **Details**, turn on **Allow access to file URLs** so saved lectures are reused instead of fetched again.
 
 > 💡 **Cheapest good start:** Strong = a strong writer, everything else on one Gemini Flash-Lite key. Leave Cheap/Vision/Transcript empty and they all follow the Cheap AI.
@@ -140,28 +133,23 @@ Callouts you will meet: `Example` · `Extra example` · `Analogy` · `Extra (bey
 
 <br>
 
-A Chrome extension can't start a CLI or a browser, so these providers use the local helper in [`bridge/`](bridge) (Node 18+):
+The local bridge in [`bridge/`](bridge) connects Vid2Study to browser sessions and CLIs. It needs Node.js 18 or newer.
 
-| Provider | What it uses | Notes |
-|---|---|---|
-| **Claude CLI** | your Claude subscription via `claude -p`, stripped to ~1K tokens per call | text and images (as temporary files) |
-| **ChatGPT (Codex CLI)** | your ChatGPT Plus sign-in via `codex exec` | text and images, with a reasoning level per model choice |
-| **Gemini web** | your signed-in gemini.google.com | plain HTTP after a one-time sign-in; pictures too |
-| **Langdock** | your workspace's models (GPT, Claude, Gemini…) | plain HTTP after a one-time sign-in |
+| Provider | Sign-in |
+|---|---|
+| **Gemini web** | Sign in with Google in the bridge’s dedicated Chrome profile. The bridge refreshes its session from that profile. |
+| **ChatGPT (Codex CLI)** | Use **Sign in to ChatGPT** in Options or run `codex login`. The optional shared-profile button opens device-code verification in Gemini’s Chrome profile. Enable device-code sign-in in ChatGPT first. Codex saves its own CLI session and uses your plan’s Codex limits. |
+| **Claude CLI** | Use **Sign in to Claude** in Options or run `claude auth login`. Claude Code saves its own CLI session. |
+| **Langdock** | Sign in to your workspace in Langdock’s dedicated Chrome profile. |
 
-```bash
-cd bridge
-npm install
-npm start          # prints a token; paste it as the provider's API key
-```
+1. On Windows, run `bridge/Start-Bridge.cmd` once to set up the bridge and register automatic startup. Options can start it on demand after setup. On other systems, run `npm install` and `npm start` in `bridge/` to start it manually.
+2. Open **Options → Local helper**. A green dot means connected. A red dot means the provider needs attention and its sign-in button is available. Grey means the bridge could not check the session.
+3. In **Options → Add provider**, choose your bridge provider and assign it to a model role. On manual setup, use the token printed by the bridge in the provider’s **Bridge token** field.
+4. After updating files in `bridge/`, restart the bridge once so it loads the changes. After updating extension files, reload Vid2Study in `chrome://extensions`.
 
-On Windows, double-click `bridge/Start-Bridge.cmd` (or run `node setup.mjs`) and it checks Node, Chrome, the Claude CLI and your sign-ins, and installs what's missing. Restart the bridge after you change anything in `bridge/`.
+Install Codex CLI with `npm install -g @openai/codex` if needed. A model ID such as `gpt-6.2-sol:high` sets the reasoning level for that role. Set `CODEX_BIN` before starting the bridge if it needs an explicit path to your Codex executable.
 
-For **Gemini web**, click **Sign in to Gemini** on its provider card in Options. Finish signing in to Google in the Chrome window, then close it. The bridge saves and refreshes the session from its dedicated Chrome profile automatically. If a summary pauses because Gemini needs you to sign in again, choose **Sign in to Gemini and resume** in the recovery window.
-
-To set up **ChatGPT (Codex CLI)**, install Codex with `npm install -g @openai/codex` if needed. Run `codex login` and choose ChatGPT sign-in. In **Options → Add provider**, choose **ChatGPT (Codex CLI)**, then select it for **Strong AI** or another text or vision slot. A model name like `gpt-6.2-sol:high` sets the reasoning effort for that slot. You can also type another model ID supported by your account. The provider uses your plan's Codex usage limits. If the bridge cannot find Codex, set `CODEX_BIN` to the executable path before starting the bridge.
-
-⚠️ **Security:** the bridge only answers `chrome-extension://` pages that send its token. `bridge/profile/`, `bridge/*-session.json` and `bridge/token.txt` hold your sign-ins: they are git-ignored. **Never share or commit them.** Google's terms restrict automated use of the consumer app, so keep the volume low.
+The bridge listens on localhost. Keep `bridge/token.txt`, the browser profiles, and the session files private. Git ignores those local files.
 
 </details>
 
@@ -174,7 +162,8 @@ To set up **ChatGPT (Codex CLI)**, install Codex with `npm install -g @openai/co
 - **📚 Lectures drawer (university LMS).** Open a course page and click **LECTURES**. Every lecture is grouped by module and chapter. Tick a **whole week** with one click, or press **Without notes** to select everything not yet summarised, then **Summarize selected (N)**. They run one after another; a failure never stops the rest, and the queue survives a restart.
 - **From a file.** *Options → Summarize from a file…* takes a video or audio file (and an optional `.vtt`/`.srt`).
 - **YouTube.** The transcript is found without listening whenever possible (the page's player, then `yt-dlp`). Figures come from the video itself, and link back with "Watch at".
-- **Results page.** Copy text (raw LaTeX), **Bundle .zip** (`summary.md`, an offline `summary.html`, `images/`, `frames.json`) or **Print → Save as PDF**.
+- **Results page.** Copy text (raw LaTeX), **Bundle .zip** (Markdown, offline HTML, images, frame metadata, and captured lecture sources when available). **Print** opens a dedicated tab for printing or saving the paginated notes as a PDF.
+- **Practice questions.** A matching Gemini web or Langdock writer can continue in the same conversation when the complete lecture context is available there. A separate model, a CLI or API model, or an unavailable conversation gets the raw transcript and the writer’s saved slide images.
 - **Activity log.** One collapsible block per job, with the time each stage took.
 
 ---
@@ -194,7 +183,7 @@ It runs the pure logic (chunking, alignment, scene detection, the frame classifi
 ## 🔒 Privacy and safety
 
 - API keys live in `chrome.storage.local` and go only to their own provider, in a header. They are never logged.
-- Transcription, slide detection and OCR run **on your computer**. Only text and the frames you choose are sent to the AI you configured. The video file itself is never uploaded.
+- Transcription, slide detection and OCR run **on your computer**. The local pipeline sends text and selected frames to the providers configured for each role. Cloud speech-to-text can receive audio. The legacy Gemini video engine can upload video.
 - `host_permissions` is `<all_urls>` because videos live on many hosts and AI endpoints are configurable. The content script only runs on sites you enable.
 - It never tries to break DRM, and only downloads direct files you can already play. Use it for personal study and follow your institution's and the video site's rules.
 
@@ -212,10 +201,10 @@ It runs the pure logic (chunking, alignment, scene detection, the frame classifi
 - **Model list stays empty.** Check the key and URL (OpenAI-compatible URLs usually end in `/v1`); the status line under the provider shows the error.
 - **A model failed mid-run.** The job pauses; a window lets you switch the model or skip the stage, then it continues from the saved draft.
 - **"Failed to fetch" with a bridge provider.** The bridge isn't running (or was restarted): start it, or use *Start bridge* in Options.
-- **Notes are slow with Gemini web.** Thinking models take a while; use a `-low` model for cheap jobs.
+- **Gemini web is taking a while.** The job shows when the bridge is uploading images, waiting for answer text, or receiving the answer. Higher reasoning settings can take longer.
 - **Frames look wrong or missing.** While the testing option *Save a debug dump* is on, the results page has a **Debug dump** button: every frame shows whether the code merged it, which AI call kept or dropped it, and why.
 - **"Could not download the video (HTTP 403)".** The link expired or the Referer check failed: reload the lecture page.
-- **A formula shows as text.** KaTeX couldn't parse it; the rest is unaffected, and *Copy text* has the raw LaTeX.
+- **Print reports a formula error.** The pre-print check found math that could not be typeset. **Copy text** includes the source LaTeX for inspection.
 
 </details>
 
@@ -230,6 +219,7 @@ Vid2Study/
 ├─ offscreen.js             hidden worker page that runs a job
 ├─ content.js + adapters/   the floating UI and per-site code (university LMS, YouTube, generic)
 ├─ options.* · results.*    settings and the notes viewer / export
+├─ pager.html               isolated print renderer
 ├─ lib/
 │  ├─ local-pipeline.js     ⭐ the main pipeline (resumable, pauses on model failure)
 │  ├─ prompts.js            every prompt
@@ -239,7 +229,7 @@ Vid2Study/
 │  ├─ llm.js                Gemini / OpenAI-compatible / Anthropic / bridge providers
 │  ├─ algoviz.js            runs real algorithms and draws every step
 │  └─ vendor/               Whisper (transformers.js), ONNX runtime, Tesseract, KaTeX
-├─ bridge/                  optional local helper: Claude CLI, Gemini web, Langdock, yt-dlp
+├─ bridge/                  Codex CLI, Claude CLI, Gemini web, Langdock, and yt-dlp
 └─ tests/                   `npm test`: pure logic + the pipeline with a fake AI
 ```
 
