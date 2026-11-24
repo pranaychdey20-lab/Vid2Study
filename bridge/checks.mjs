@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findClaude } from './claude.mjs';
+import { codexLoginCheck, findCodex } from './codex.mjs';
 
 export const HERE = dirname(fileURLToPath(import.meta.url));
 const WIN = process.platform === 'win32';
@@ -54,18 +55,17 @@ export function claudeLoginCheck() {
 /** Langdock: a session file exists and the saved cookie still works (one cheap request). */
 export async function langdockLoginCheck() {
   try {
-    const { langdock, resetLangdock } = await import('./langdock.mjs');
-    resetLangdock();
-    const ld = await langdock().init();
+    const { Langdock } = await import('./langdock.mjs');
+    const ld = await new Langdock().init();
     return { ok: true, detail: `Signed in to Langdock (${ld.models.length} models)` };
   } catch (e) { return { ok: false, detail: e.status === 401 ? 'Not signed in to Langdock' : String(e.message).split('\n')[0] }; }
 }
 
-export async function geminiLoginCheck() {
+export async function geminiLoginCheck({ refresh = false } = {}) {
   if (!playwrightCheck().ok || !chromeCheck().ok) return { ok: false, detail: 'Needs Chrome and playwright-core first' };
   try {
     const { geminiHttpReady } = await import('./geminihttp.mjs');
-    if (await geminiHttpReady()) return { ok: true, detail: 'Signed in to Gemini web (fast HTTP path ready)' };
+    if (await geminiHttpReady({ refresh })) return { ok: true, detail: 'Signed in to Gemini web (fast HTTP path ready)' };
     const { geminiSignedIn } = await import('./geminiweb.mjs');
     const ok = await geminiSignedIn();
     return { ok, detail: ok ? 'Signed in to Gemini web' : 'Not signed in to Gemini web' };
@@ -75,9 +75,11 @@ export async function geminiLoginCheck() {
 /** All checks. `deep` also opens headless Chrome to verify the Google sign-in (about 10 s). */
 export async function status({ deep = false } = {}) {
   const out = { node: nodeCheck(), playwright: playwrightCheck(), chrome: chromeCheck(), claude: claudeCheck(), claudeLogin: claudeLoginCheck() };
-  out.langdockLogin = await langdockLoginCheck();
-  out.geminiLogin = deep ? await geminiLoginCheck() : { ok: null, detail: 'Not checked (use the full check)' };
-  out.ytdlp = await ytdlpCheck();
+  [out.codexLogin, out.langdockLogin, out.geminiLogin, out.ytdlp] = await Promise.all([
+    codexLoginCheck(), langdockLoginCheck(),
+    deep ? geminiLoginCheck() : { ok: null, detail: 'Not checked (use the full check)' },
+    ytdlpCheck()
+  ]);
   return out;
 }
 
@@ -90,11 +92,13 @@ export async function ytdlpCheck() {
 }
 
 /** Run a visible command to completion, output inherited (terminal) or discarded (bridge). */
-const runLong = (cmd, args, inherit) => new Promise((resolve) => {
-  const c = spawn(cmd, args, { shell: WIN, windowsHide: !inherit, stdio: inherit ? 'inherit' : 'ignore', cwd: HERE });
+const runLong = (cmd, args, inherit, { shell = WIN, visible = inherit } = {}) => new Promise((resolve) => {
+  const c = spawn(cmd, args, { shell, windowsHide: !visible, stdio: inherit ? 'inherit' : 'ignore', cwd: HERE });
   c.on('error', () => resolve(false));
   c.on('close', (code) => resolve(code === 0));
 });
+
+let geminiLoginWindow;
 
 /** Fixes. Each returns { ok, detail }. */
 export const fixes = {
@@ -116,9 +120,41 @@ export const fixes = {
     return { ok: ok && chromeCheck().ok, detail: ok ? 'Chrome installed' : 'Could not install Chrome (get it from google.com/chrome)' };
   },
   /** Opens a visible window for the user to sign in; resolves when it is closed. Passwords are never touched. */
-  async geminiLogin(inherit = false) {
-    const ok = await runLong('node', ['login.mjs'], inherit);
-    return { ok, detail: 'Gemini sign-in window closed' };
+  async geminiLogin(inherit = false, { chatgpt = false } = {}) {
+    if (!playwrightCheck().ok || !chromeCheck().ok) return { ok: false, detail: 'Gemini sign-in needs Chrome and playwright-core. Use Check setup in Options.' };
+    if (geminiLoginWindow && geminiLoginWindow.chatgpt !== chatgpt) {
+      return { ok: false, detail: 'Finish the sign-in already open in the bridge Chrome profile, then try again.' };
+    }
+    if (!geminiLoginWindow) {
+      geminiLoginWindow = (async () => {
+        const { withGeminiLogin } = await import('./geminiweb.mjs');
+        const args = ['login.mjs', ...(chatgpt ? ['--chatgpt'] : [])];
+        const opened = await withGeminiLogin(() => chatgpt && !inherit
+          ? runLong('start', ['"Vid2Study ChatGPT sign-in"', '/wait', `"${process.execPath}"`, ...args], false, { visible: true })
+          : runLong(process.execPath, args, inherit, { shell: false }));
+        if (!opened) return { ok: false, detail: chatgpt
+          ? 'ChatGPT device sign-in did not complete. Enable device code sign-in in ChatGPT settings or use Sign in to ChatGPT.'
+          : 'Could not open the Gemini sign-in window. Close any existing bridge sign-in window and try again.' };
+        return chatgpt ? codexLoginCheck() : geminiLoginCheck({ refresh: true });
+      })().finally(() => { geminiLoginWindow = null; });
+      geminiLoginWindow.chatgpt = chatgpt;
+    }
+    return geminiLoginWindow;
+  },
+  async codexLogin() {
+    const bin = findCodex();
+    if (!bin) return { ok: false, detail: 'Install Codex CLI with npm install -g @openai/codex, then try again.' };
+    const checked = await codexLoginCheck(bin);
+    if (checked.ok) return checked;
+    const ok = await runLong(bin, ['-c', 'cli_auth_credentials_store="auto"', 'login'], false, { shell: false });
+    return ok ? codexLoginCheck(bin) : { ok: false, detail: 'ChatGPT sign-in did not complete. Run codex login in a terminal to see the error.' };
+  },
+  async codexProfileLogin() {
+    const checked = await codexLoginCheck();
+    if (checked.ok) return checked;
+    if (!findCodex()) return checked;
+    if (!WIN) return { ok: false, detail: 'Stop the bridge, then run node login.mjs --chatgpt in the bridge folder.' };
+    return fixes.geminiLogin(false, { chatgpt: true });
   },
   async langdockLogin(inherit = false) {
     const ok = await runLong('node', ['login-langdock.mjs'], inherit);

@@ -124,19 +124,23 @@ export class Langdock {
     }
   }
 
-  async askOnce(prompt, { model, effort, images = [], signal } = {}) {
+  async askOnce(prompt, { model, effort, images = [], signal, session } = {}) {
     await this.ready();
     const m = model && model !== 'auto' ? this.findModel(model) : null;
     if (images.length && m && m.supportsVision === false) throw new Error(`${m.displayName} cannot see pictures: pick a vision model.`);
-    const conversationId = randomUUID(), turnId = randomUUID();
+    const validId = id => typeof id === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id);
+    if (session && ![session.conversationId, session.replyId].every(validId)) {
+      throw Object.assign(new Error('Invalid Langdock conversation.'), { status: 409 });
+    }
+    const conversationId = session?.conversationId || randomUUID(), turnId = randomUUID();
     const attachments = await Promise.all(images.map((im, i) => this.upload(im, i)));
     const body = {
       id: conversationId, conversationSource: 'WEB', userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       modelSelection: m ? { kind: 'modelId', modelId: m.id } : { kind: 'auto' },
       extendedThinking: false, contextWindowMode: 'STANDARD',
       ...(m && effort && m.allowedReasoningEfforts?.includes(effort) ? { reasoningEffort: effort } : {}),
-      messages: [{ id: turnId, role: 'user', parts: [{ type: 'text', text: `${prompt}\n\nDo not ask clarifying questions.` }], metadata: {
-        parentId: ZERO, threadId: turnId, selectedTool: null, selectedInternalSearchIntegrations: [], attachments,
+      messages: [{ id: turnId, role: 'user', parts: [{ type: 'text', text: prompt }], metadata: {
+        parentId: session?.replyId || ZERO, threadId: turnId, selectedTool: null, selectedInternalSearchIntegrations: [], attachments,
         taggedIntegrations: [], taggedKnowledgeFolders: [], taggedWorkflows: [], taggedAssistantId: null,
         modelId: m ? m.id : 'auto', modelProvider: m ? m.provider : null, modelName: m ? m.displayName : null,
         userFeedback: null, createdAt: new Date().toISOString() } }]
@@ -145,9 +149,15 @@ export class Langdock {
     const send = () => longFetch(`${BASE}/api/engine`, { method: 'POST', signal,
       headers: this.headers({ 'content-type': 'application/json', 'x-langdock-stream-end': 'waiting' }), body: JSON.stringify(body) });
 
-    const parts = []; let error = '', sawEvents = false, head = '';
+    const parts = []; let error = '', sawEvents = false, head = '', replyId;
     const onEvent = async (ev) => {
       switch (ev.type) {
+        case 'start': {
+          // The stream appends a role suffix. The follow-up request expects the UUID alone.
+          const id = typeof ev.messageId === 'string' && ev.messageId.split(':')[0];
+          if (validId(id)) replyId = id;
+          break;
+        }
         case 'text-start': parts.push({ kind: 'text', text: '' }); break;
         case 'text-delta': { const p = parts.at(-1); if (p?.kind === 'text') p.text += ev.delta; break; }
         case 'tool-input-start': parts.push({ kind: 'tool' }); break;
@@ -180,7 +190,7 @@ export class Langdock {
     if (error) throw new Error(error);
     const lastTool = parts.map((p) => p.kind).lastIndexOf('tool');
     const text = parts.slice(lastTool + 1).map((p) => (p.kind === 'text' ? p.text.trim() : '')).filter(Boolean).join('\n\n');
-    return { text, usage: { in: 0, out: 0 }, truncated: false };
+    return { text, session: replyId ? { conversationId, replyId } : undefined, usage: { in: 0, out: 0 }, truncated: false };
   }
 }
 
