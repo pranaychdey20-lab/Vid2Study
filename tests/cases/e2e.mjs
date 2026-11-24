@@ -3,7 +3,7 @@ globalThis.chrome = { runtime: { getURL: (p) => p } };
 const assert=(await import('node:assert')).default;
 const { runLocalPipeline } = await import('./lib/local-pipeline.js');
 const { getResult } = await import('./lib/db.js');
-const { calls } = await import('./lib/llm.js');
+const { calls, failures } = await import('./lib/llm.js');
 const { normalizeSettings } = await import('./lib/settings.js');
 const settings = normalizeSettings({ providers:[{id:'g',type:'gemini',name:'G',apiKey:'k',baseUrl:'x'},{id:'o',type:'openai',name:'O',apiKey:'k',baseUrl:'http://localhost:11434/v1'}], strong:{provider:'g',model:'BIG'}, cheap:{provider:'o',model:'small'}, visuals:false, practiceQuestions:false, researchReferences:false });
 globalThis.fetch = async () => { throw new Error("offline (tests never use the network)"); };
@@ -21,7 +21,7 @@ const tasks=b.calls.map(c=>c.task); console.log(tasks.join(','));
 assert.ok(tasks.filter(t=>t==='CHUNK').length>=14); assert.ok(b.calls.filter(c=>c.task==='CHUNK').every(c=>c.model==='small'));
 assert.ok(b.calls.filter(c=>c.task==='WRITE').every(c=>c.model==='BIG')); assert.equal(tasks.at(-1),'FINAL');
 assert.match(b.r.summary_markdown,/## Overview\n\n- ov/); assert.ok(!/Exam hints/.test(b.r.summary_markdown));
-assert.equal(b.r.pipeline.route,'map-reduce'); assert.equal(b.r.model,'small + BIG');
+assert.equal(b.r.pipeline.route,'map-reduce'); assert.equal(b.r.model,'BIG');
 console.log('long ok', b.r.usage.bySlot, b.r.pipeline.chunks);
 // long, default: the strong model reads the FULL transcript in parts (no cheap summaries), parts in parallel
 {
@@ -38,6 +38,18 @@ console.log('long ok', b.r.usage.bySlot, b.r.pipeline.chunks);
   assert.ok(qc && qc.model === 'BIG', 'practice questions by the strong model');
   assert.equal(q.calls.filter((c) => c.task === 'WRITE').length, 2, '120 min -> 2 parts');
   assert.match(q.r.summary_markdown, /## Practice questions[\s\S]*\*\*Q1\.\*\*/);
+  const separate = await run('separate-paper', 20, { practiceQuestions: true, practice: { provider: 'o', model: 'paper' } });
+  const paper = separate.calls.find(c => c.task === 'QUESTIONS');
+  assert.equal(paper?.model, 'paper');
+  assert.match(paper.prompt, /RAW LECTURE TRANSCRIPT\n[\s\S]*word 0 blah blah/);
+  assert.match(separate.r.summary_markdown, /Supplemental explanation continues here/);
+  assert.doesNotMatch(paper.prompt, /Supplemental explanation continues here/);
+  failures.push({ model: 'paper', task: 'QUESTIONS', reply: 'I seem to be encountering an error.' });
+  try {
+    await assert.rejects(run('invalid-paper', 20, { practiceQuestions: true, practice: { provider: 'o', model: 'paper' } }),
+      error => error.info?.slot === 'practice');
+    assert.equal(await getResult('invalid-paper'), undefined);
+  } finally { failures.pop(); }
   console.log('full transcript + questions ok');
 }
 // resume after failure in the middle of map: second run reuses chunk notes

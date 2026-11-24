@@ -66,6 +66,8 @@ const run = async (key, min, set) => {
   assert.ok(r?.summary_markdown);
   assert.deepEqual(calls.filter((c) => c.task === 'WRITE').map((c) => c.model), ['BIG', 'BIG2']);
   failures.length = 0;
+  assert.equal(r.model, 'BIG2');
+  assert.deepEqual(r.writers, ['BIG2']);
   console.log('strong fallback ok');
 }
 

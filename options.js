@@ -1,9 +1,10 @@
 /** Options page: AI providers (key + URL, automatic model fetch), who does what, output, sites, cache. */
 import { MODELS } from './lib/common.js';
 import { clearAll, countResults } from './lib/db.js';
-import { listModels, detectProvider, generate, gfetch, nativeBridge } from './lib/llm.js';
+import { listModels, detectProvider, generate, gfetch, nativeBridge, signInGemini } from './lib/llm.js';
 import { sttModelsFor, sttModelFor } from './lib/stt.js';
 import { checkModel, checkVision, isSpeechModel, clipText } from './lib/modelcheck.js';
+import { needsGeminiSignIn } from './lib/stagefix.js';
 import { loadSettings, saveSettings, KNOWN_SERVICES, PROVIDER_TYPES, PRESETS, BRIDGE_TYPES, BRIDGE_BASE, BRIDGE_MODELS } from './lib/settings.js';
 
 const $ = (id) => document.getElementById(id);
@@ -39,15 +40,16 @@ function drawProviders() {
       <label>Type</label>
       <select data-f="type">${Object.entries(PROVIDER_TYPES).map(([k, v]) => `<option value="${k}" ${p.type === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
       <label>Base URL</label><input type="text" data-f="baseUrl" value="${esc(p.baseUrl)}" placeholder="${esc(PROVIDER_TYPES[p.type].base)}">
-      <label>API key</label>
-      <div class="row"><input type="password" data-f="apiKey" value="${esc(p.apiKey)}" autocomplete="off" placeholder="paste key">
+      <label>${BRIDGE_TYPES.includes(p.type) ? 'Bridge token' : 'API key'}</label>
+      <div class="row"><input type="password" data-f="apiKey" value="${esc(p.apiKey)}" autocomplete="off" placeholder="${BRIDGE_TYPES.includes(p.type) ? 'Filled in by the local bridge' : 'paste key'}">
         <button type="button" data-a="show">Show</button></div>
       <div class="row"><button type="button" data-a="fetch">Fetch models</button><button type="button" data-a="remove" ${S.providers.length < 2 ? 'disabled' : ''}>Remove</button></div>
       <label>Check that a model answers</label>
       <select data-c="pick"></select>
-      <div class="row" style="margin-top:6px"><input type="text" data-c="model" autocomplete="off" placeholder="or type a model name">
+      <div class="row" style="margin-top:6px">
         <button type="button" data-a="check">Check model</button><button type="button" data-a="checkVision">Check vision</button></div>
       <div class="msg" data-r="check"></div>
+      ${p.type === 'geminiweb' ? `<div class="row"><button type="button" data-a="geminiLogin" ${$('bridgeLogins').querySelector('[data-session="geminiLogin"] .session-dot').dataset.state === 'connected' ? 'disabled' : ''}>Sign in to Gemini</button></div>` : ''}
       <div class="msg" data-r="status">${p.models?.length ? `${p.models.length} models loaded.` : ''}</div>
     </div>`).join('');
   fillSelects();
@@ -65,7 +67,8 @@ const SLOTS = [
   { k: 'video', prov: 'videoProv', model: 'videoModel', gemini: true },
   { k: 'notes', prov: 'notesProv', model: 'notesModel' },
   { k: 'digest', prov: 'digestProv', model: 'digestModel', optional: true, none: 'Same as Cheap AI' },
-  { k: 'strongFallback', prov: 'strongFbProv', model: 'strongFbModel', optional: true, none: 'No fallback' }
+  { k: 'strongFallback', prov: 'strongFbProv', model: 'strongFbModel', optional: true, none: 'No fallback' },
+  { k: 'practice', prov: 'practiceProv', model: 'practiceModel', optional: true }
 ];
 
 function fillSelects() {
@@ -79,12 +82,7 @@ function fillSelects() {
     const p = S.providers.find((x) => x.id === $(sel).value);
     const slot = SLOTS.find((x) => x.model === input);
     const ids = slot.suggest ? slot.suggest(p) : modelIds(p); // speech models are hidden from provider model lists, so suggest them
-    let dl = document.getElementById(`dl-${input}`);
-    if (!dl) { dl = document.createElement('datalist'); dl.id = `dl-${input}`; document.body.appendChild(dl); $(input).setAttribute('list', dl.id); }
-    dl.innerHTML = ids.map((m) => `<option value="${esc(m)}">`).join('');
-    // A plain dropdown with every model: a datalist only shows entries matching what is already typed.
-    $(`${input}Pick`).innerHTML = `<option value="">${ids.length ? `Pick a model (${ids.length})` : 'No models loaded: type a name below'}</option>` +
-      ids.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    $(`${input}Pick`).innerHTML = modelOptions(ids, $(input).value.trim());
     syncPick(input);
   }
   fillLevels();
@@ -96,35 +94,60 @@ function fillSelects() {
 function drawCheapPool() {
   const el = $('cheapPool');
   if (!el) return;
-  const all = [...new Set(S.providers.flatMap((p) => modelIds(p)))];
-  let dl = document.getElementById('dl-cheapPool');
-  if (!dl) { dl = document.createElement('datalist'); dl.id = 'dl-cheapPool'; document.body.appendChild(dl); }
-  dl.innerHTML = all.map((m) => `<option value="${esc(m)}">`).join('');
   el.innerHTML = (S.cheapPool || []).map((r, i) => `<div class="row" data-i="${i}" style="margin-bottom:6px">
     <b style="min-width:22px">${i + 2}.</b>
     <select data-p="provider">${S.providers.map((p) => `<option value="${esc(p.id)}" ${p.id === r.provider ? 'selected' : ''}>${esc(p.name)} (${PROVIDER_TYPES[p.type].label})</option>`).join('')}</select>
-    <input type="text" data-p="model" list="dl-cheapPool" autocomplete="off" placeholder="model name" value="${esc(r.model || '')}">
+    <select data-p="model" aria-label="Fallback model">${modelOptions(modelIds(S.providers.find(p => p.id === r.provider)), r.model)}</select>
     <button type="button" data-a="rmCheap">Remove</button></div>`).join('') || '<div class="hint">No fallbacks yet.</div>';
 }
 $('addCheap')?.addEventListener('click', () => {
   (S.cheapPool ||= []).push({ provider: S.cheap.provider || S.providers[0]?.id || '', model: '' });
   drawCheapPool();
-  $('cheapPool').querySelector('.row:last-child input')?.focus();
+  $('cheapPool').querySelector('.row:last-child [data-p="model"]')?.focus();
 });
-$('cheapPool')?.addEventListener('change', (e) => { const i = Number(e.target.closest('.row')?.dataset.i); const f = e.target.dataset.p; if (S.cheapPool?.[i] && f) S.cheapPool[i][f] = e.target.value.trim(); });
-$('cheapPool')?.addEventListener('input', (e) => { const i = Number(e.target.closest('.row')?.dataset.i); if (S.cheapPool?.[i] && e.target.dataset.p === 'model') S.cheapPool[i].model = e.target.value.trim(); });
+$('cheapPool')?.addEventListener('change', e => {
+  const row = S.cheapPool?.[Number(e.target.closest('.row')?.dataset.i)];
+  if (!row) return;
+  if (e.target.dataset.p === 'provider') {
+    row.provider = e.target.value;
+    row.model = '';
+  } else if (e.target.dataset.p === 'model') {
+    row.model = pickedModel(e.target, row.model);
+  }
+  drawCheapPool();
+});
 $('cheapPool')?.addEventListener('click', (e) => { if (e.target.dataset.a !== 'rmCheap') return; S.cheapPool.splice(Number(e.target.closest('.row').dataset.i), 1); drawCheapPool(); });
 
-/** Show the current model in its dropdown (or the placeholder when it is a custom name). */
+const CUSTOM_MODEL = '__vid2study_enter_custom_model__';
+
+function modelOptions(ids, current) {
+  const models = [...new Set([...ids, current].filter(Boolean))];
+  return '<option value="">Pick a model</option>' +
+    models.map(id => `<option value="${esc(id)}" ${id === current ? 'selected' : ''}>${esc(id)}</option>`).join('') +
+    `<option value="${CUSTOM_MODEL}">Enter a custom model…</option>`;
+}
+
+function pickedModel(select, previous = '') {
+  if (select.value !== CUSTOM_MODEL) return select.value;
+  return window.prompt('Enter the model ID', previous)?.trim() || previous;
+}
+
 function syncPick(input) {
   const pick = $(`${input}Pick`);
-  pick.value = [...pick.options].some((x) => x.value === $(input).value.trim()) ? $(input).value.trim() : '';
+  const current = $(input).value.trim();
+  const prior = pick.querySelector('[data-custom-model]');
+  if (prior && prior.value !== current) prior.remove();
+  if (current && ![...pick.options].some(option => option.value === current)) {
+    const custom = new Option(current, current);
+    custom.dataset.customModel = '1';
+    pick.add(custom, pick.options.length - 1);
+  }
+  pick.value = current;
 }
 for (const input of SLOTS.map((s) => s.model)) {
-  $(`${input}Pick`).addEventListener('change', (e) => {
-    if (!e.target.value) return;
-    $(input).value = e.target.value;
-    $(input).dispatchEvent(new Event('input')); // thinking level and video status follow the model
+  $(`${input}Pick`).addEventListener('change', e => {
+    $(input).value = pickedModel(e.target, $(input).value);
+    $(input).dispatchEvent(new Event('input'));
   });
   $(input).addEventListener('input', () => syncPick(input));
 }
@@ -237,20 +260,22 @@ $('providers').addEventListener('input', (e) => {
 function fillCheckPicks() {
   for (const box of document.querySelectorAll('.prov')) {
     const p = S.providers.find((x) => x.id === box.dataset.id);
-    const sel = box.querySelector('[data-c="pick"]'), input = box.querySelector('[data-c="model"]');
-    if (!p || !sel || !input) continue;
-    const ids = modelIds(p);
-    if (!input.value) input.value = defaultCheckModel(p);
-    sel.innerHTML = `<option value="">${ids.length ? `Pick a model to check (${ids.length})` : 'No models loaded: type a name below'}</option>` +
-      ids.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
-    sel.value = ids.includes(input.value) ? input.value : '';
+    const sel = box.querySelector('[data-c="pick"]');
+    if (!p || !sel) continue;
+    sel.innerHTML = modelOptions(modelIds(p), sel.value || defaultCheckModel(p));
+    sel.dataset.previous = sel.value;
   }
 }
-$('providers').addEventListener('change', (e) => {
-  if (e.target.dataset?.c !== 'pick' || !e.target.value) return;
-  e.target.closest('.prov').querySelector('[data-c="model"]').value = e.target.value;
+$('providers').addEventListener('change', e => {
+  if (e.target.dataset.c !== 'pick') return;
+  const select = e.target;
+  const p = S.providers.find(provider => provider.id === select.closest('.prov').dataset.id);
+  if (select.value === CUSTOM_MODEL) {
+    select.innerHTML = modelOptions(modelIds(p), pickedModel(select, select.dataset.previous));
+  }
+  select.dataset.previous = select.value;
 });
-$('providers').addEventListener('click', (e) => {
+$('providers').addEventListener('click', async (e) => {
   const a = e.target.dataset.a;
   const box = e.target.closest('.prov');
   if (!a || !box) return;
@@ -259,26 +284,26 @@ $('providers').addEventListener('click', (e) => {
     const i = box.querySelector('[data-f="apiKey"]');
     i.type = i.type === 'password' ? 'text' : 'password';
     e.target.textContent = i.type === 'password' ? 'Show' : 'Hide';
-  } else if (a === 'check') {
+  } else if (a === 'geminiLogin') {
     const p = S.providers.find((x) => x.id === id);
-    const input = box.querySelector('[data-c="model"]');
     const out = box.querySelector('[data-r="check"]');
-    if (!input.value.trim()) input.value = defaultCheckModel(p);
     e.target.disabled = true;
-    setMsg(out, 'Checking...');
-    checkModel(p, input.value.trim())
-      .then((t) => setMsg(out, t, true), (err) => setMsg(out, `Not working: ${err.message}`, false))
-      .finally(() => { e.target.disabled = false; });
-  } else if (a === 'checkVision') {
+    setMsg(out, 'Finish signing in to Google in the Chrome window, then close that window.');
+    try { setMsg(out, await signInGemini(p), true); }
+    catch (err) { setMsg(out, err.message, false); }
+    finally { e.target.disabled = false; refreshSessions().catch(() => {}); }
+  } else if (a === 'check' || a === 'checkVision') {
     const p = S.providers.find((x) => x.id === id);
-    const input = box.querySelector('[data-c="model"]');
+    const input = box.querySelector('[data-c="pick"]');
     const out = box.querySelector('[data-r="check"]');
-    if (!input.value.trim()) input.value = defaultCheckModel(p);
+    const vision = a === 'checkVision';
+    if (!input.value.trim()) input.innerHTML = modelOptions(modelIds(p), defaultCheckModel(p));
     e.target.disabled = true;
-    setMsg(out, 'Checking that it can see images...');
-    checkVision(p, input.value.trim())
-      .then((t) => setMsg(out, t, true), (err) => setMsg(out, `Cannot see images: ${err.message}`, false))
-      .finally(() => { e.target.disabled = false; });
+    setMsg(out, vision ? 'Checking that it can see images...' : 'Checking...');
+    try { setMsg(out, await (vision ? checkVision : checkModel)(p, input.value.trim(), message => setMsg(out, message)), true); }
+    catch (err) {
+      setMsg(out, needsGeminiSignIn(err) ? 'Gemini web is signed out. Use “Sign in to Gemini” below.' : `${vision ? 'Vision check failed' : 'Model check failed'}: ${err.message}`, false);
+    } finally { e.target.disabled = false; }
   } else if (a === 'fetch') { const p = S.providers.find((x) => x.id === id); (isStockUrl(p.baseUrl) && p.apiKey ? autoDetect(id) : fetchModels(id)); }
   else if (a === 'remove' && S.providers.length > 1) {
     S.providers = S.providers.filter((p) => p.id !== id);
@@ -286,7 +311,7 @@ $('providers').addEventListener('click', (e) => {
     if (S.video.provider === id) S.video.provider = S.providers.find((p) => p.type === 'gemini')?.id || '';
     if (S.notes.provider === id) S.notes.provider = S.providers[0].id;
     if (S.strong.provider === id) S.strong = { provider: S.providers[0].id, model: '' };
-    for (const k of ['cheap', 'vision', 'stt', 'digest', 'strongFallback']) if (S[k]?.provider === id) S[k] = { provider: '', model: '' };
+    for (const k of ['cheap', 'vision', 'stt', 'digest', 'strongFallback', 'practice']) if (S[k]?.provider === id) S[k] = { provider: '', model: '' };
     S.cheapPool = (S.cheapPool || []).filter((r) => r.provider !== id);
     drawProviders();
   }
@@ -331,12 +356,47 @@ async function autoToken() {
   if (r.running) need.forEach((p) => fetchModels(p.id, { quiet: true }));
 }
 async function bridgeCall(path, method = 'GET') {
-  const res = await fetch(`${bridgeUrl()}${path}`, { method, headers: { 'x-bridge-token': bridgeTok() }, signal: AbortSignal.timeout(600000) });
+  const timeout = path === '/setup/login-codex-profile' ? 960000 : 600000;
+  const res = await fetch(`${bridgeUrl()}${path}`, { method, headers: { 'x-bridge-token': bridgeTok() }, signal: AbortSignal.timeout(timeout) });
   if (res.status === 401) throw new Error('The bridge is running but the token is wrong. Paste the token from bridge/token.txt.');
   return res.json();
 }
-const FIXES = { langdockLogin: ['Sign in to Langdock', 'login-langdock'], ytdlp: ['Update now', 'ytdlp'], playwright: ['Install playwright-core', 'playwright'], chrome: ['Install Chrome', 'chrome'], claude: ['Install Claude CLI', 'claude'], claudeLogin: ['Sign in to Claude', 'login-claude'], geminiLogin: ['Sign in to Gemini', 'login-gemini'] };
-const LABELS = { langdockLogin: 'Langdock sign-in', node: 'Node', playwright: 'playwright-core', chrome: 'Google Chrome', claude: 'Claude CLI', claudeLogin: 'Claude sign-in', geminiLogin: 'Gemini web sign-in', ytdlp: 'yt-dlp (YouTube without listening)' };
+const FIXES = { ytdlp: ['Update now', 'ytdlp'], playwright: ['Install playwright-core', 'playwright'], chrome: ['Install Chrome', 'chrome'], claude: ['Install Claude CLI', 'claude'] };
+const LABELS = { node: 'Node', playwright: 'playwright-core', chrome: 'Google Chrome', claude: 'Claude CLI', ytdlp: 'yt-dlp (YouTube without listening)' };
+let sessionCheck;
+let sessionVersion = 0;
+
+function paintSessions(status, fallback = 'Status unavailable') {
+  for (const row of $('bridgeLogins').querySelectorAll('[data-session]')) {
+    if (row.dataset.signingIn) continue;
+    const session = status?.[row.dataset.session];
+    const connected = session?.ok === true;
+    const disconnected = session?.ok === false;
+    row.querySelector('.session-dot').dataset.state = connected ? 'connected' : disconnected ? 'disconnected' : 'unknown';
+    const label = row.querySelector('[data-session-status]');
+    label.textContent = connected ? 'Connected' : disconnected ? 'Needs attention' : fallback;
+    label.title = session?.detail || '';
+    for (const button of row.querySelectorAll('button')) button.disabled = !disconnected;
+    if (row.dataset.session === 'geminiLogin') {
+      for (const button of $('providers').querySelectorAll('[data-a="geminiLogin"]')) button.disabled = connected;
+    }
+  }
+}
+
+function refreshSessions() {
+  if (!sessionCheck) {
+    const version = sessionVersion;
+    sessionCheck = bridgeCall('/status?deep=1').then(status => {
+      if (!status.node) throw new Error(status.error?.message || 'Session status unavailable');
+      if (version === sessionVersion) paintSessions(status);
+      return status;
+    }).catch(error => {
+      if (version === sessionVersion) paintSessions(null);
+      throw error;
+    }).finally(() => { sessionCheck = null; });
+  }
+  return sessionCheck;
+}
 async function bridgeCheck() {
   const msg = $('bridgeMsg');
   setMsg(msg, 'Checking (the Gemini sign-in check opens a hidden Chrome, about 10 s)...');
@@ -344,10 +404,10 @@ async function bridgeCheck() {
     const up = await fetch(`${bridgeUrl()}/ping`, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok, () => false);
     if (!up) { $('bridgeList').innerHTML = ''; return setMsg(msg, 'The bridge is not running. Press "Start bridge", or double-click bridge/Start-Bridge.cmd.', false); }
     if (!bridgeTok()) return setMsg(msg, 'The bridge is running. Paste its token above (bridge/token.txt).', false);
-    const st = await bridgeCall('/status?deep=1');
+    const st = await refreshSessions();
     $('bridgeList').innerHTML = Object.entries(LABELS).map(([k, label]) => {
       const r = st[k]; if (!r) return '';
-      const fix = k === 'ytdlp' ? FIXES.ytdlp : !r.ok && (k === 'geminiLogin' && !st.chrome?.ok ? null : FIXES[k]);
+      const fix = k === 'ytdlp' || !r.ok ? FIXES[k] : null;
       return `<div class="site"><span>${r.ok ? '✓' : '✗'} ${esc(label)}: ${esc(r.detail)}</span>${fix ? `<button type="button" data-fix="${fix[1]}">${fix[0]}</button>` : ''}</div>`;
     }).join('');
     const bad = Object.values(st).filter((r) => r.ok === false).length;
@@ -367,16 +427,27 @@ $('ldCookieSave').addEventListener('click', async () => {
   } catch (e) { setMsg($('bridgeMsg'), `Could not reach the bridge: ${e.message}. Press Start bridge first.`, false); }
 });
 $('bridgeStop').addEventListener('click', async () => {
-  try { await bridgeCall('/shutdown', 'POST'); setMsg($('bridgeMsg'), 'Bridge stopped. It starts again by itself when a summary needs it, or press Start bridge.', true); $('bridgeList').innerHTML = ''; } catch (e) { setMsg($('bridgeMsg'), /fetch/i.test(e.message) ? 'The bridge is not running.' : e.message, false); }
+  try { await bridgeCall('/shutdown', 'POST'); sessionVersion++; paintSessions(null, 'Bridge stopped'); setMsg($('bridgeMsg'), 'Bridge stopped. It starts again by itself when a summary needs it, or press Start bridge.', true); $('bridgeList').innerHTML = ''; } catch (e) { setMsg($('bridgeMsg'), /fetch/i.test(e.message) ? 'The bridge is not running.' : e.message, false); }
 });
-$('bridgeList').addEventListener('click', async (e) => {
+async function bridgeAction(e) {
   const what = e.target.dataset.fix;
   if (!what) return;
-  e.target.disabled = true;
-  setMsg($('bridgeMsg'), what.startsWith('login') ? 'A window opens: sign in there, finish, close it. Then press "Check setup".' : 'Working, this can take a minute...');
-  try { const r = await bridgeCall(`/setup/${what}`, 'POST'); setMsg($('bridgeMsg'), r.detail || 'Done', r.ok); if (!what.startsWith('login') || r.ok) await bridgeCheck(); } catch (err) { setMsg($('bridgeMsg'), err.message, false); }
-  e.target.disabled = false;
-});
+  const row = e.target.closest('[data-session]');
+  if (row) row.dataset.signingIn = 'true';
+  for (const button of row?.querySelectorAll('button') || [e.target]) button.disabled = true;
+  setMsg($('bridgeMsg'), what === 'login-codex-profile'
+    ? 'Enter the code shown in the terminal in the Chrome window opened by the bridge.'
+    : what.startsWith('login') ? 'Complete the sign-in in the window that opens.' : 'Working, this can take a minute...');
+  try { const r = await bridgeCall(`/setup/${what}`, 'POST'); setMsg($('bridgeMsg'), r.detail || r.error?.message || 'Done', r.ok); if (!what.startsWith('login')) await bridgeCheck(); } catch (err) { setMsg($('bridgeMsg'), err.message, false); }
+  if (row) {
+    sessionVersion++;
+    if (sessionCheck) await sessionCheck.catch(() => {});
+    delete row.dataset.signingIn;
+    await refreshSessions().catch(() => {});
+  } else e.target.disabled = false;
+}
+$('bridgeList').addEventListener('click', bridgeAction);
+$('bridgeLogins').addEventListener('click', bridgeAction);
 $('bridgeStart').addEventListener('click', async () => {
   setMsg($('bridgeMsg'), 'Starting the bridge...');
   // Native Messaging: Chrome starts the small host registered by bridge/setup.mjs, which starts the bridge and returns its token.
@@ -431,8 +502,15 @@ async function load() {
   drawSites();
   await showCache();
   await showFileHint();
-  autoToken();
+  await autoToken();
+  refreshSessions().catch(() => {});
 }
+
+const refreshVisibleSessions = () => {
+  if (!document.hidden && S && !$('bridgeLogins').querySelector('[data-signing-in]')) refreshSessions().catch(() => {});
+};
+document.addEventListener('visibilitychange', refreshVisibleSessions);
+setInterval(refreshVisibleSessions, 45000);
 
 /** One-time hint, only when a saved lecture exists and file access is off; hidden after the button is used. */
 async function showFileHint() {
@@ -451,16 +529,17 @@ async function save() {
     const provider = $(s.prov).value;
     return { provider, model: provider ? $(s.model).value.trim().replace(/^models\//, '') : '' };
   };
-  const [cheap, strong, vision, stt, video, notes, digest, strongFallback] = SLOTS.map(ref);
+  const [cheap, strong, vision, stt, video, notes, digest, strongFallback, practice] = SLOTS.map(ref);
   const cheapPool = (S.cheapPool || []).filter((r) => r.provider && String(r.model || '').trim()).map((r) => ({ provider: r.provider, model: String(r.model).trim().replace(/^models\//, '') }));
   const engine = $('engine').value;
   if (engine === 'local' && !strong.model) return setMsg($('saveMsg'), 'Enter a model for the Strong AI.', false);
+  if (engine === 'local' && $('practiceQuestions').checked && practice.provider && !practice.model) return setMsg($('saveMsg'), 'Select a Practice Paper Model.', false);
   if (engine === 'local' && ((cheap.provider && !cheap.model) || (vision.provider && !vision.model) || (stt.provider && !stt.model))) return setMsg($('saveMsg'), 'Enter a model for the Cheap / Vision / Speech-to-text AI, or leave its provider on the default.', false);
   if (engine === 'gemini' && (!video.model || !notes.model)) return setMsg($('saveMsg'), 'Enter a model for the video AI and the notes AI.', false);
   const num = (id, lo, hi, d) => Math.min(hi, Math.max(lo, Number($(id).value) || d));
   await saveSettings({
     providers: S.providers.map((p) => ({ ...p, baseUrl: p.baseUrl.replace(/\/+$/, '') })),
-    engine, cheap, strong, vision, stt, video, notes, digest, strongFallback, cheapPool,
+    engine, cheap, strong, vision, stt, video, notes, digest, strongFallback, practice, cheapPool,
     useVision: $('useVision').checked,
     downloadFirst: $('downloadFirst').checked,
     downloadMaxHours: num('downloadMaxHours', 0, 48, 3),

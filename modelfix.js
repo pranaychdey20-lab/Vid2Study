@@ -5,10 +5,10 @@
  * Every value that comes from a provider is written with textContent, never as HTML.
  */
 import { loadSettings, saveSettings } from './lib/settings.js';
-import { listModels } from './lib/llm.js';
+import { listModels, signInGemini } from './lib/llm.js';
 import { checkModel, checkVision } from './lib/modelcheck.js';
 import { MODELS } from './lib/common.js';
-import { adviceFor } from './lib/stagefix.js';
+import { adviceFor, needsGeminiSignIn } from './lib/stagefix.js';
 
 const $ = (id) => document.getElementById(id);
 const id = new URLSearchParams(location.search).get('id');
@@ -56,6 +56,7 @@ async function init() {
   $('vModel').textContent = `${info.slotLabel}: ${info.model || 'none'}${info.providerName ? ` (${info.providerName})` : ''}${info.status != null ? ` · HTTP ${info.status}` : ''}`;
   $('vReason').textContent = info.reason;
   $('vAdvice').textContent = adviceFor(info);
+  $('geminiLoginRow').hidden = !needsGeminiSignIn(info) || !S.providers.some((p) => p.id === info.provider && p.type === 'geminiweb');
   $('slotNote').textContent = info.fallback
     ? `The ${info.slotLabel} is not set, so the Strong AI was used for this step. Pick the model this role should use from now on, or choose "Same as the Strong AI" and change the Strong AI instead.`
     : `This sets the ${info.slotLabel}.`;
@@ -123,6 +124,30 @@ $('test').addEventListener('click', async () => {
   say(r.text, r.ok);
   tested = r.ok ? 'ok' : 'bad';
   $('test').disabled = false; busy = false;
+});
+
+$('geminiLogin').addEventListener('click', async () => {
+  if (busy) return;
+  const p = S.providers.find((p) => p.id === info.provider && p.type === 'geminiweb');
+  if (!p) return;
+  busy = true;
+  $('geminiLogin').disabled = true;
+  const msg = $('geminiLoginMsg');
+  msg.className = 'msg';
+  msg.textContent = 'Finish signing in to Google in the Chrome window, then close that window.';
+  try {
+    await signInGemini(p);
+    msg.textContent = 'Signed in. Resuming this summary…';
+    const r = await send({ type: 'RESUME_JOB', id });
+    if (r?.error) throw new Error(r.error);
+    window.close();
+  } catch (err) {
+    msg.className = 'msg bad';
+    msg.textContent = err.message;
+  } finally {
+    busy = false;
+    $('geminiLogin').disabled = false;
+  }
 });
 
 $('go').addEventListener('click', async () => {
