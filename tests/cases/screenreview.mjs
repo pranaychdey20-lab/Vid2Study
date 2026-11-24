@@ -131,7 +131,7 @@ globalThis.fetch = async () => { throw new Error('offline'); };
   assert.ok(!/ON SCREEN F1 /.test(w), 'the quote frame is not offered as a figure');
   assert.match(w, /QUOTES \(never skip\)/);
   const r = await getResult('sq1');
-  assert.match(r.summary_markdown, /> \*\*Quote:\*\* “Forget not the tyranny of this wall \.\.\. nor the love of freedom that made it fall \.\.\.” — Unknown, Graffiti on the Berlin Wall/);
+  assert.match(r.summary_markdown, /> \*\*Watch Out:\*\* Frame F1 was read as: .*Forget not the tyranny/, 'unverified visual transcription is preserved with uncertainty');
   assert.ok(!r.frames.some((f) => f.index === 1), 'and no figure was made of it');
   assert.match(r.summary_markdown, /## References[\s\S]*Forget not the tyranny of this wall/, 'the quote is also researched and listed under References');
   assert.match(calls.find((c) => c.task === 'REFERENCES').prompt, /\[quote\] “Forget not the tyranny of this wall[^\n]*Unknown, Graffiti on the Berlin Wall/);

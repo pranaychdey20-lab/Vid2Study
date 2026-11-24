@@ -1,7 +1,7 @@
 /**
- * Local bridge for the Vid2Study extension (a Chrome extension cannot start Playwright or the Claude CLI).
- *   GET  /health            -> { ok, backends: { 'claude-cli': bool, 'gemini-web': bool } }
- *   POST /generate          -> { backend:'claude-cli'|'gemini-web', model, prompt, system?, images?:[{mime,b64}], json?, effort? }
+ * Local bridge for the Vid2Study extension (a Chrome extension cannot start Playwright or local CLIs).
+ *   GET  /health            -> { ok, backends }
+ *   POST /generate          -> { backend, model, prompt, system?, images?:[{mime,b64}], json?, effort? }
  *                              reply { text, usage:{in,out}, truncated }
  *   POST /youtube/subs      -> { id } -> { text, lang }  captions through yt-dlp (youtube.mjs)
  *   POST /youtube/media     -> { id, kind:'audio'|'video', maxHeight? } -> the file itself (audio/mp4, video/mp4)
@@ -16,7 +16,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runClaude, findClaude } from './claude.mjs';
-import { status, fixes } from './checks.mjs';
+import { runCodex, findCodex } from './codex.mjs';
+import { geminiLoginCheck, status, fixes } from './checks.mjs';
 import { askGeminiHttp } from './geminihttp.mjs';
 import { langdock, resetLangdock, saveCookieHeader } from './langdock.mjs';
 import { statSync, createReadStream } from 'node:fs';
@@ -64,6 +65,7 @@ function send(res, status, body, origin) {
   res.end(JSON.stringify(body));
 }
 
+const geminiProgress = new Map();
 const server = createServer(async (req, res) => {
   const origin = req.headers.origin || '';
   const okOrigin = origin.startsWith('chrome-extension://') ? origin : '';
@@ -75,8 +77,11 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/ping') return send(res, 200, { ok: true }, okOrigin); // lets Options tell "not running" from "wrong token"
   if (req.headers['x-bridge-token'] !== TOKEN) return send(res, 401, { error: { message: 'Wrong or missing bridge token. Paste the contents of bridge/token.txt as the API key.' } }, okOrigin);
   try {
+    if (req.method === 'GET' && req.url?.startsWith('/progress/')) {
+      return send(res, 200, geminiProgress.get(req.url.slice('/progress/'.length)) || {}, okOrigin);
+    }
     if (req.method === 'GET' && req.url === '/health') {
-      return send(res, 200, { ok: true, backends: { 'claude-cli': !!findClaude(), 'gemini-web': true, langdock: true } }, okOrigin);
+      return send(res, 200, { ok: true, backends: { 'claude-cli': !!findClaude(), 'codex-cli': !!findCodex(), 'gemini-web': true, langdock: true } }, okOrigin);
     }
     if (req.method === 'POST' && req.url === '/shutdown') {
       send(res, 200, { ok: true }, okOrigin);
@@ -86,6 +91,9 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/models/langdock') {
       const ld = await langdock().ready();
       return send(res, 200, { models: ld.models.map((m) => ({ name: m.displayName, vision: m.supportsVision !== false, efforts: m.allowedReasoningEfforts || [] })) }, okOrigin);
+    }
+    if (req.method === 'GET' && req.url === '/status/gemini') {
+      return send(res, 200, await geminiLoginCheck(), okOrigin);
     }
     if (req.method === 'GET' && req.url.startsWith('/status')) {
       return send(res, 200, await status({ deep: req.url.includes('deep=1') }), okOrigin);
@@ -101,10 +109,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url.startsWith('/setup/')) {
       const what = req.url.slice(7); // fix: playwright | claude | chrome ; login: gemini | claude
-      const table = { ytdlp: fixes.ytdlp, playwright: fixes.playwright, claude: fixes.claude, chrome: fixes.chrome, 'login-gemini': fixes.geminiLogin, 'login-langdock': fixes.langdockLogin, 'login-claude': fixes.claudeLogin };
+      const table = { ytdlp: fixes.ytdlp, playwright: fixes.playwright, claude: fixes.claude, chrome: fixes.chrome, 'login-gemini': fixes.geminiLogin, 'login-langdock': fixes.langdockLogin, 'login-claude': fixes.claudeLogin, 'login-codex': fixes.codexLogin, 'login-codex-profile': fixes.codexProfileLogin };
       if (!table[what]) return send(res, 404, { error: { message: 'Unknown setup step.' } }, okOrigin);
       if (what === 'login-langdock') resetLangdock(); // pick up the new cookie
-      if (what === 'login-gemini') await gemini?.closeGemini?.(); // the visible login window needs the profile to itself
       return send(res, 200, await table[what](), okOrigin);
     }
     // ---- YouTube via yt-dlp (captions / audio / video without playing the video) ----
@@ -131,28 +138,50 @@ const server = createServer(async (req, res) => {
       const j = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableEnded) ac.abort(); }); // the extension gave up: stop the work
-      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], model: j.model, signal: ac.signal };
+      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], model: j.model, session: j.session, signal: ac.signal };
       let out;
       if (j.backend === 'claude-cli') {
         const done = await claudeSlot();
         const m = splitEffort(j.model);
         try { out = await runClaude({ ...o, model: m.model, effort: m.effort || j.effort }); } finally { done(); }
+      } else if (j.backend === 'codex-cli') {
+        out = await runCodex({ ...o, effort: j.effort });
       } else if (j.backend === 'gemini-web') {
-        // Text and pictures go over plain HTTP (fast); any HTTP failure that is not a sign-out falls back to the browser path.
-        if (!process.env.GEMINI_BROWSER_ONLY) {
-          try { out = await askGeminiHttp(o); } catch (e) { if (e.status === 401 || o.signal.aborted) throw e; console.log(`Gemini HTTP failed (${e.message}); using the browser.`); }
+        const id = /^[a-f0-9-]{36}$/i.test(j.progressId || '') && !geminiProgress.has(j.progressId) ? j.progressId : null;
+        const onProgress = message => { if (id) geminiProgress.set(id, { message }); };
+        const deadline = setTimeout(() => ac.abort(), 30 * 60000);
+        o.onProgress = onProgress;
+        try {
+          if (!process.env.GEMINI_BROWSER_ONLY) {
+            try { out = await askGeminiHttp(o); } catch (e) {
+              if (e.status === 401 || o.signal.aborted || o.session) throw e;
+              console.log(`Gemini HTTP failed (${e.message}); using the browser.`);
+            }
+          }
+          if (!out && o.session) throw Object.assign(new Error("Gemini conversation is unavailable."), { status: 409 });
+          if (!out) {
+            onProgress('Waiting for the Gemini browser to become available');
+            out = await (await geminiBackend()).askGemini(o);
+          }
+          console.log(`Gemini ${String(j.model || 'auto').replace(/[^\w:-]/g, '')}: returned ${out.text.length} answer characters (${o.images.length} images sent to bridge).`);
+        } catch (error) {
+          if (ac.signal.aborted && !res.destroyed) throw Object.assign(new Error('Gemini did not finish within 30 minutes.'), { status: 504 });
+          throw error;
+        } finally {
+          clearTimeout(deadline);
+          if (id) geminiProgress.delete(id);
         }
-        out ||= await (await geminiBackend()).askGemini(o);
       } else if (j.backend === 'langdock') {
         out = await langdock().ask(o.system ? `${o.system}
 
-${o.prompt}` : o.prompt, { ...(({ model, effort }) => ({ model, effort: effort || j.effort }))(splitEffort(j.model)), images: o.images, signal: o.signal });
+${o.prompt}` : o.prompt, { ...(({ model, effort }) => ({ model, effort: effort || j.effort }))(splitEffort(j.model)), images: o.images, session: o.session, signal: o.signal });
       } else return send(res, 400, { error: { message: `Unknown backend "${j.backend}".` } }, okOrigin);
       return send(res, 200, out, okOrigin);
     }
     return send(res, 404, { error: { message: 'Not found.' } }, okOrigin);
   } catch (e) {
-    return send(res, e.status || 500, { error: { message: e.message } }, okOrigin);
+    const code = e.code === 'GEMINI_LOGIN_REQUIRED' ? e.code : undefined;
+    return send(res, e.status || 500, { error: { message: e.message, code } }, okOrigin);
   }
 });
 

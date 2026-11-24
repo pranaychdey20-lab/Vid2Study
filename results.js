@@ -4,11 +4,14 @@
  * copy / zip bundle / printable view.
  */
 import { getResult, getFrame } from './lib/db.js';
-import { renderMarkdown } from './lib/md.js';
+import { lectureHtml, writerLabel } from './lib/lecture-layout.js';
+import { paginate } from './lib/paginate.js';
 import { makeZip } from './lib/zip.js';
 import { fmtTime, sanitizeName, toCopyText, stripTimestamps } from './lib/common.js';
 
-const key = new URLSearchParams(location.search).get('key');
+const params = new URLSearchParams(location.search);
+const key = params.get('key');
+const printView = params.get('print') === '1' && window === window.top;
 const $ = (id) => document.getElementById(id);
 const objectUrls = [];
 let result = null;
@@ -17,7 +20,11 @@ const images = new Map();
 
 /** Look and feel of callouts, figures and math: shared by the panel and the standalone export. */
 export const NOTES_CSS = `
+.contents {break-after:page;border-bottom:2px solid #314752;padding-bottom:18px} .snapshot,.math-note-row {display:grid;grid-template-columns:55% 42%;gap:3%} .math-note-row>p {border-left:1px solid #aab7bd;padding-left:12px}.page-ref {display:inline;font-size:.9em}.page-ref::after {content:"";} .figure-pair {display:grid;grid-template-columns:1fr 1fr;gap:12px;break-inside:avoid} figure {margin:10px 0} figure img {max-height:145mm;object-fit:contain} figcaption,.topic-ref {font-size:.85em;color:#475963}.banner-meta {color:#465762}.slide-ocr,.watch-out,.quick-check,.extra-context {display:block;border-left:3px solid #486876;padding:6px 12px;margin:8px 0;background:#f5f7f7}.extra-context {border-color:#a17439}.slide-ocr strong {display:block;font-size:.7em;letter-spacing:.06em}.math-note-row,figure,.slide-ocr,.watch-out,tr {break-inside:avoid} h2,h3 {break-after:avoid} @page {size:A4;margin:16mm}
 blockquote.callout { margin: 12px 0; padding: 6px 12px; border: 0; border-left: 6px solid #000; background: #f2f2f2; }
+.inline-explanation { margin: 8px 0 14px; padding: 6px 12px; border: 1px solid #829aa3; border-left: 3px solid #466c7a; background: #f2f7f8; break-inside: avoid; }
+.inline-explanation p { margin: 4px 0; }
+@media print { p:has(+ .inline-explanation), ul:has(+ .inline-explanation), ol:has(+ .inline-explanation), .slide-ocr:has(+ .inline-explanation) { break-after: avoid; } }
 blockquote.callout > p:first-child > strong:first-child { display: inline-block; background: #000; color: #fff; padding: 1px 7px; margin-right: 6px; font: 800 10px/1.7 ui-monospace, Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
 blockquote.callout p { margin: 4px 0; }
 blockquote.c-extra { border-left-style: dashed; }
@@ -90,13 +97,11 @@ async function buildStandaloneHtml() {
   const dataUrls = new Map();
   for (const [name, blob] of images) dataUrls.set(name, await compactDataUrl(blob));
   // printed / exported pages carry no video times (they stay in the stored notes, for the AI and "copy")
-  const body = renderMarkdown(stripTimestamps(result.summary_markdown), {
+  const body = lectureHtml(result, stripTimestamps(result.summary_markdown), {
     imageSrc: (src) => dataUrls.get(src.replace(/^images\//, '')) || src,
     math: renderMath
-  });
-  const created = new Date(result.createdAt).toLocaleString();
-  const tokens = result.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '';
-  return `<!doctype html>
+  }, true);
+  return paginate(`<!doctype html>
 <html><head><meta charset="utf-8"><title>${escHtml(result.title)}</title>
 <style>${body.includes("class=\"katex") ? await inlineKatexCss() : ""}</style>
 <style>
@@ -115,9 +120,8 @@ async function buildStandaloneHtml() {
   ${NOTES_CSS}
   @media print { body { margin: 0; max-width: none; } img, table, pre, figure { page-break-inside: avoid; } h2, h3 { page-break-after: avoid; } }
 </style></head><body>
-<div class="meta">${escHtml(result.course || '')} · ${escHtml(created)} · ${escHtml(result.model || 'AI')} · ${result.frames.length} figures${tokens}</div>
 ${body}
-</body></html>`;
+</body></html>`);
 }
 
 async function download(blob, filename) {
@@ -155,6 +159,7 @@ async function downloadZip() {
   const folder = sanitizeName(result.title, 'lecture');
   const files = [
     { name: `${folder}/summary.md`, data: result.summary_markdown },
+    ...(result.sourceRecord ? [{ name: `${folder}/lecture-sources.txt`, data: result.sourceRecord }] : []),
     { name: `${folder}/summary.html`, data: await buildStandaloneHtml() },
     {
       name: `${folder}/frames.json`,
@@ -175,11 +180,17 @@ async function downloadZip() {
 }
 
 async function openPrintable() {
+  const url = new URL(chrome.runtime.getURL('results.html'));
+  url.searchParams.set('key', key);
+  url.searchParams.set('print', '1');
+  await chrome.tabs.create({ url: url.href });
+}
+
+async function renderPrintable() {
+  $('status').textContent = 'Preparing printable notes…';
   const html = await buildStandaloneHtml();
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-  // chrome.tabs.create does not depend on the click's user-activation window.
-  await chrome.tabs.create({ url }).catch(() => window.open(url, '_blank'));
-  setTimeout(() => URL.revokeObjectURL(url), 5 * 60000);
+  location.replace(url);
 }
 
 async function init() {
@@ -196,6 +207,7 @@ async function init() {
     const blob = await getFrame(`${key}/${f.filename}`);
     if (blob) images.set(f.filename, blob);
   }
+  if (printView) return renderPrintable();
   const blobUrls = new Map();
   for (const [name, blob] of images) {
     const u = URL.createObjectURL(blob);
@@ -205,8 +217,8 @@ async function init() {
 
   document.title = result.title;
   const tokens = result.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '';
-  $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${result.model || ''}${tokens}`;
-  $('out').innerHTML = renderMarkdown(result.summary_markdown, {
+  $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${writerLabel(result)}${tokens}`;
+  $('out').innerHTML = lectureHtml(result, result.summary_markdown, {
     imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
     math: renderMath
   });

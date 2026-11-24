@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { GeminiLoginRequired } from './geminihttp.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROFILE = process.env.GEMINI_PROFILE || join(HERE, 'profile');
@@ -32,6 +33,20 @@ export function parseModel(id) {
 let ctx = null;
 let queue = Promise.resolve();
 
+function inProfile(action) {
+  const run = queue.then(action);
+  queue = run.catch(() => {});
+  return run;
+}
+
+/** The visible sign-in window needs exclusive access to the dedicated profile. */
+export function withGeminiLogin(action) {
+  return inProfile(async () => {
+    await closeGemini();
+    return action();
+  });
+}
+
 async function context() {
   if (ctx) return ctx;
   ctx = await chromium.launchPersistentContext(PROFILE, { ...LAUNCH, headless: true }).catch((e) => {
@@ -45,47 +60,53 @@ async function context() {
 
 /** Is the saved profile signed in to Google? (Opens the headless browser; closes it again if we opened it.) */
 export async function geminiSignedIn() {
-  const wasOpen = !!ctx;
-  const run = queue.then(async () => {
+  return inProfile(async () => {
+    const wasOpen = !!ctx;
     const c = await context();
     const page = await c.newPage();
     try {
       await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 120000 });
+      if (await signedOut(page)) return false;
       await page.locator('[role=textbox]').first().waitFor({ timeout: 45000 }).catch(() => {});
-      return !/accounts\.google\.com/.test(page.url()) && (await page.locator('[role=textbox]').count()) > 0;
+      return !(await signedOut(page)) && await page.locator('[role=textbox]').first().isVisible();
     } finally { await page.close().catch(() => {}); if (!wasOpen) await closeGemini(); }
   });
-  queue = run.catch(() => {});
-  return run;
 }
 
 /** Google cookies of the signed-in profile (for the HTTP path). Opens the headless browser if it is not open. */
 export async function exportGoogleCookies() {
-  const wasOpen = !!ctx;
-  const run = queue.then(async () => {
+  return inProfile(async () => {
+    const wasOpen = !!ctx;
+    let page;
     try {
       const c = await context();
-      const page = await c.newPage();
-      await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 120000 }).catch(() => {});
+      page = await c.newPage();
+      await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(2500); // let Google refresh rotating cookies (PSIDTS)
-      await page.close().catch(() => {});
-      return (await c.cookies('https://gemini.google.com', 'https://www.google.com')).filter((x) => /(^|\.)google\.com$/.test(x.domain));
-    } finally { if (!wasOpen) await closeGemini(); }
+      if (await signedOut(page)) throw new GeminiLoginRequired();
+      return await c.cookies('https://gemini.google.com/app');
+    } finally {
+      await page?.close().catch(() => {});
+      if (!wasOpen) await closeGemini();
+    }
   });
-  queue = run.catch(() => {});
-  return run;
 }
 
 export async function closeGemini() { const c = ctx; ctx = null; await c?.close().catch(() => {}); }
 
 /** One request at a time: they all share one browser profile. */
 export function askGemini(job) {
-  const run = queue.then(() => ask(job));
-  queue = run.catch(() => {});
-  return run;
+  return inProfile(() => ask(job));
 }
 
-async function ask({ prompt, system, images = [], model: modelId, signal }) {
+async function signedOut(page) {
+  if (new URL(page.url()).hostname === 'accounts.google.com') return true;
+  return page.getByRole('link', { name: /^sign in$/i }).or(page.getByRole('button', { name: /^sign in$/i })).first().isVisible();
+}
+
+async function ask({ prompt, system, images = [], model: modelId, signal, onProgress }) {
+  signal?.throwIfAborted();
+  onProgress?.('Opening Gemini in the bridge browser');
   const { model, level } = parseModel(modelId);
   const c = await context();
   const page = await c.newPage();
@@ -96,20 +117,25 @@ async function ask({ prompt, system, images = [], model: modelId, signal }) {
   signal?.addEventListener('abort', () => page.close().catch(() => {}), { once: true });
   try {
     await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 120000 });
-    if (/accounts\.google\.com/.test(page.url())) throw Object.assign(new Error('Gemini web is signed out. Run `npm run login` in the bridge folder and sign in.'), { status: 401 });
+    if (await signedOut(page)) throw new GeminiLoginRequired();
     const box = page.locator('[role=textbox]').first();
     try { await box.waitFor({ timeout: 90000 }); } catch {
-      if (/accounts\.google\.com/.test(page.url())) throw Object.assign(new Error('Gemini web is signed out. Run `npm run login` in the bridge folder and sign in.'), { status: 401 });
+      if (await signedOut(page)) throw new GeminiLoginRequired();
       await fail('Gemini web: the input box did not appear (the page layout may have changed).');
     }
+    if (await signedOut(page)) throw new GeminiLoginRequired();
     if (model || level) await pickModel(page, model, level).catch((e) => fail(`Gemini web: could not select ${modelId} (${e.message.split('\n')[0]}).`));
-    if (images.length) await attach(page, images.slice(0, 10)).catch((e) => fail(`Gemini web: could not attach the pictures (${e.message.split('\n')[0]}).`));
+    if (images.length) {
+      onProgress?.('Uploading images in the Gemini browser');
+      await attach(page, images.slice(0, 10)).catch((e) => fail(`Gemini web: could not attach the pictures (${e.message.split('\n')[0]}).`));
+    }
     await box.click();
     const text = system ? `${system}\n\n${prompt}` : prompt;
     // Long prompts: type() is slow, so insert the text in one go.
     await box.evaluate((el, t) => { el.focus(); document.execCommand('insertText', false, t); }, text);
     const t0 = Date.now();
     await page.keyboard.press('Enter');
+    onProgress?.('Prompt submitted in the Gemini browser. Waiting for an answer');
     const deadline = t0 + MAX_REPLY_MS;
     const mins = Math.round(MAX_REPLY_MS / 60000);
     const resp = page.locator('message-content, .model-response-text, .markdown').last();
@@ -124,8 +150,10 @@ async function ask({ prompt, system, images = [], model: modelId, signal }) {
       stable = cur && cur === last ? stable + 1 : 0;
       last = cur;
       const working = await busy();
-      // finished: no Stop button and 2 s without change; or (if the Stop button cannot be seen at all) 8 s without change
-      if (cur && ((!working && stable >= 2) || stable >= 8)) { done = true; break; }
+      if (cur) onProgress?.('Gemini is writing the answer');
+      else if (working) onProgress?.('Gemini shows generation in progress');
+      // Wait for the Stop button to disappear and the answer text to settle.
+      if (cur && !working && stable >= 2) { done = true; break; }
     }
     if (!last) await fail(`Gemini web returned no answer within ${mins} min.`, 504);
     if (!done) console.log(`[gemini-web] the answer was still changing after ${mins} min; returning what is there`);

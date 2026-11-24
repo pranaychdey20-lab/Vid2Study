@@ -29,6 +29,7 @@ export async function generate(p, model, o) {
   const task = /\[TASK:(\w+)\]/.exec(o.prompt)[1];
   calls.push({ model, task, prompt: o.prompt, maxTokens: o.maxTokens, images: o.images?.length || 0, labels: (o.images || []).map((i) => i.label) });
   const f = failures.find((x) => (!x.model || x.model === model) && (!x.task || x.task === task));
+  if (f?.reply) return { text: f.reply, usage: { in: 1, out: 1 } };
   if (f) throw Object.assign(new Error(f.message || `Not found (404): The model \`${model}\` does not exist.`), 'status' in f ? { status: f.status } : {});
   if (task === 'SCREEN' || task === 'DESCRIBE') {
     // a fake vision model: SCREEN keeps every 3rd frame (the others are "dup"), DESCRIBE ranks by id and describes
@@ -77,7 +78,7 @@ export async function generate(p, model, o) {
   if (task === 'WRITE') {
     const full = /## Overview/.test(o.prompt.split('OUTPUT (markdown')[1] || '');
     const n = (o.prompt.match(/part (\d+) of/) || [, '1'])[1];
-    const body = `### Topic ${n} (00:10)\n- **Big idea:** big ${n}\n> **Extra example:** e\n[[VISUAL: Sine | shows sine | amplitude slider]]\n$$x=1$$\n`;
+    const body = `### Topic ${n} (00:10)\n- **Big idea:** big ${n}\n> **[EXTRA]:** e\n>\n> Supplemental explanation continues here.\n[[VISUAL: Sine | shows sine | amplitude slider]]\n$$x=1$$\n`;
     return { text: full ? `## Overview\n- o\n\n## Detailed notes\n${body}\n## Exam hints\n- h` : body, usage: { in: 1000, out: 500 } };
   }
   return { text: 'x', usage: { in: 1, out: 1 } };

@@ -36,6 +36,9 @@ async function setupRules() {
   });
 }
 chrome.runtime.onInstalled.addListener(setupRules);
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === 'install') chrome.runtime.openOptionsPage().catch(() => {});
+});
 chrome.runtime.onStartup.addListener(setupRules);
 setupRules().catch(() => {});
 

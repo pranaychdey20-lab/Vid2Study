@@ -140,11 +140,12 @@ Callouts you will meet: `Example` · `Extra example` · `Analogy` · `Extra (bey
 
 <br>
 
-A Chrome extension can't start a CLI or a browser, so three extra providers go through a tiny helper in [`bridge/`](bridge) (Node 18+):
+A Chrome extension can't start a CLI or a browser, so these providers use the local helper in [`bridge/`](bridge) (Node 18+):
 
 | Provider | What it uses | Notes |
 |---|---|---|
 | **Claude CLI** | your Claude subscription via `claude -p`, stripped to ~1K tokens per call | text and images (as temporary files) |
+| **ChatGPT (Codex CLI)** | your ChatGPT Plus sign-in via `codex exec` | text and images, with a reasoning level per model choice |
 | **Gemini web** | your signed-in gemini.google.com | plain HTTP after a one-time sign-in; pictures too |
 | **Langdock** | your workspace's models (GPT, Claude, Gemini…) | plain HTTP after a one-time sign-in |
 
@@ -155,6 +156,10 @@ npm start          # prints a token; paste it as the provider's API key
 ```
 
 On Windows, double-click `bridge/Start-Bridge.cmd` (or run `node setup.mjs`) and it checks Node, Chrome, the Claude CLI and your sign-ins, and installs what's missing. Restart the bridge after you change anything in `bridge/`.
+
+For **Gemini web**, click **Sign in to Gemini** on its provider card in Options. Finish signing in to Google in the Chrome window, then close it. The bridge saves and refreshes the session from its dedicated Chrome profile automatically. If a summary pauses because Gemini needs you to sign in again, choose **Sign in to Gemini and resume** in the recovery window.
+
+To set up **ChatGPT (Codex CLI)**, install Codex with `npm install -g @openai/codex` if needed. Run `codex login` and choose ChatGPT sign-in. In **Options → Add provider**, choose **ChatGPT (Codex CLI)**, then select it for **Strong AI** or another text or vision slot. A model name like `gpt-6.2-sol:high` sets the reasoning effort for that slot. You can also type another model ID supported by your account. The provider uses your plan's Codex usage limits. If the bridge cannot find Codex, set `CODEX_BIN` to the executable path before starting the bridge.
 
 ⚠️ **Security:** the bridge only answers `chrome-extension://` pages that send its token. `bridge/profile/`, `bridge/*-session.json` and `bridge/token.txt` hold your sign-ins: they are git-ignored. **Never share or commit them.** Google's terms restrict automated use of the consumer app, so keep the volume low.
 

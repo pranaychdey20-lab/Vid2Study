@@ -9,6 +9,9 @@
 import http from 'node:http';
 import https from 'node:https';
 
+const httpAgent = new http.Agent({ keepAlive: true, maxFreeSockets: 4, scheduling: 'lifo' });
+const httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 4, scheduling: 'lifo' });
+
 export function longFetch(url, { method = 'GET', headers = {}, body, signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
@@ -17,8 +20,8 @@ export function longFetch(url, { method = 'GET', headers = {}, body, signal } = 
     const payload = body == null ? null : Buffer.from(typeof body === 'string' ? body : String(body));
     const h = { 'accept-encoding': 'identity', ...headers }; // plain bytes: no gzip to decode by hand
     if (payload) h['content-length'] = payload.length;
-    const req = lib.request(u, { method, headers: h, agent: false }, (res) => {
-      signal?.removeEventListener('abort', onAbort);
+    const req = lib.request(u, { method, headers: h, agent: lib === https ? httpsAgent : httpAgent }, (res) => {
+      res.once('close', () => signal?.removeEventListener('abort', onAbort));
       const one = (n) => { const v = res.headers[String(n).toLowerCase()]; return Array.isArray(v) ? v.join(', ') : v ?? null; };
       const text = async () => { const chunks = []; for await (const c of res) chunks.push(c); return Buffer.concat(chunks).toString('utf8'); };
       resolve({

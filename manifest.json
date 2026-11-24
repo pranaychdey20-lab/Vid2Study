@@ -44,7 +44,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["content.css", "results.html"],
+      "resources": ["content.css", "results.html", "pager.html"],
       "matches": ["<all_urls>"]
     }
   ]

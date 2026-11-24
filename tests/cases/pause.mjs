@@ -108,7 +108,7 @@ const pauses = async (fn) => { try { await fn(); } catch (e) { return e; } asser
 
 // every stage table entry names a known slot, and skippable ones say what skipping does
 for (const [id, s] of Object.entries(STAGE)) {
-  assert.ok(['stt', 'vision', 'cheap', 'strong', 'digest'].includes(s.slot), id);
+  assert.ok(['stt', 'vision', 'cheap', 'strong', 'digest', 'practice'].includes(s.slot), id);
   if (s.skip) assert.ok(s.skipNote, `${id} needs a skip note`);
 }
 console.log('pause ok');
