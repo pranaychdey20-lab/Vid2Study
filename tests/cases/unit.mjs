@@ -145,3 +145,26 @@ console.log('settings ok');
   assert.match(renderSteps('<b>* x | <i>'), /&lt;b&gt;/); // escaped
   console.log('steps ok');
 }
+
+{
+  const { writerEvidence } = await import('./lib/align.js');
+  const frames = [{
+    index: 42, t: 4, text: 'Pitch diameter', vision: 'Two teeth are meshing.', kinds: ['diagram']
+  }, {
+    index: 43, t: 7, text: 'Legible alternate reading', vision: 'Separate frame detail.', kinds: ['table']
+  }];
+  const chunk = { segments: [{ start: 0, end: 3, text: 'Raw lecture wording' }], screen: frames,
+    extra: [{ t: 8, line: '[00:08] ON SCREEN (quote) text: Quoted slide line' }] };
+  const ocr = { 42: { text: 'Pitch\ndiameter', conf: 90 }, 43: { text: 'Verbatim cell\nSecond row', conf: 90 } };
+  const direct = writerEvidence([chunk], ocr);
+  assert.match(direct, /LECTURE TRANSCRIPT[\s\S]*FRAME OCR[\s\S]*VISION DESCRIPTIONS[\s\S]*TEXT-ONLY SCREEN EVIDENCE/);
+  assert.match(direct, /Pitch\ndiameter/);
+  assert.doesNotMatch(direct, /Pitch diameter/);
+  for (const preserved of ['Raw lecture wording', 'Verbatim cell\nSecond row', 'Legible alternate reading', 'Two teeth are meshing.', 'Quoted slide line']) {
+    assert.ok(direct.includes(preserved), preserved);
+  }
+  const reduced = writerEvidence([chunk], ocr, 'Cheap AI coverage');
+  assert.match(reduced, /CHEAP AI CHUNK NOTES\nCheap AI coverage/);
+  assert.match(reduced, /Verbatim cell\nSecond row/);
+  assert.doesNotMatch(reduced, /Raw lecture wording/);
+}

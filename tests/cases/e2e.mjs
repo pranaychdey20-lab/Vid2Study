@@ -12,9 +12,39 @@ const run=async(key,min,extra={})=>{calls.length=0; const prog=[]; await runLoca
 // short
 let a=await run('short',20);
 assert.deepEqual(a.calls.map(c=>c.task),['WRITE']); assert.equal(a.calls[0].model,'BIG');
+assert.match(a.calls[0].prompt, /compact Markdown[\s\S]*Preserve every substantive detail[\s\S]*extension builds the contents page/);
 assert.match(a.r.summary_markdown,/# T\n\n## Overview\n\n- o/); assert.match(a.r.summary_markdown,/## Topics\n\n- 00:10 — Topic 1/); assert.ok(!/Exam hints/.test(a.r.summary_markdown)); // dropped even when the model writes one
 assert.ok(!/\[\[VISUAL/.test(a.r.summary_markdown)); assert.equal(a.r.pipeline.route,'direct');
 console.log('short ok', a.r.usage, a.r.model);
+// A yes marker requests one continuation. Web sessions can reuse their existing evidence.
+for (const type of ['geminiweb', 'langdock', 'openai', 'codexcli']) {
+  const provider = { id: 'writer', type, name: 'Writer', apiKey: 'k', baseUrl: 'http://localhost' };
+  const opts = { providers: [...settings.providers, provider], strong: { provider: 'writer', model: 'coverage-model' } };
+  const original = '## Overview\n- o\n\n## Detailed notes\n### Motion (00:10)\nOriginal fact.\n\nLater fact.\n\n### Drives (09:00)\nOriginal drive detail.\n\n<!--NEEDS math=no-->';
+  const session = { id: 'sample-conversation' };
+  failures.push(
+    { task: 'WRITE', model: 'coverage-model', reply: original + '\n<!--MISSING_DETAILS: yes-->', session },
+    { task: 'WRITE_CONTINUE', model: 'coverage-model', reply: '### Motion (00:10)\n<!--AFTER: Original fact.-->\nRecovered detail.\n\n### Gears (04:00)\nNew topic.\n\n<!--MISSING_DETAILS: no-->' }
+  );
+  try {
+    const { r, calls: records } = await run(`coverage-${type}`, 20, opts);
+    assert.deepEqual(records.map(call => call.task), ['WRITE', 'WRITE_CONTINUE']);
+    const continuation = records[1];
+    if (type === 'geminiweb' || type === 'langdock') {
+      assert.deepEqual(continuation.session, session);
+      assert.doesNotMatch(continuation.prompt, /word 0 blah/);
+    } else {
+      assert.equal(continuation.session, undefined);
+      assert.match(continuation.prompt, /word 0 blah[\s\S]*Original fact/);
+    }
+    assert.match(r.summary_markdown, /### Motion[^\n]*\nOriginal fact\.\s+Recovered detail\.\s+Later fact/);
+    assert.match(r.summary_markdown, /### Gears[^\n]*\s+New topic\.\s+### Drives/);
+    assert.doesNotMatch(r.summary_markdown, /MISSING_DETAILS|<!--AFTER:/);
+    failures[0].reply = original + '\n<!--MISSING_DETAILS: no-->';
+    const complete = await run(`complete-${type}`, 20, opts);
+    assert.deepEqual(complete.calls.map(call => call.task), ['WRITE']);
+  } finally { failures.splice(-2); }
+}
 // long: 100 min -> map (cheap) + several write groups + final
 let b=await run('long',200,{writeFullTranscript:false});
 const tasks=b.calls.map(c=>c.task); console.log(tasks.join(','));
