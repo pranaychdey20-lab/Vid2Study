@@ -17,6 +17,7 @@ const dir = mkdtempSync(join(tmpdir(), 'lh-test-'));
 cpSync(join(root, 'lib'), join(dir, 'lib'), { recursive: true, filter: (p) => !/[\\/](vendor|katex)([\\/]|$)/.test(p) });
 for (const f of ['db.js', 'llm.js']) cpSync(join(root, 'tests', 'stubs', f), join(dir, 'lib', f));
 cpSync(join(root, 'tests', 'cases'), dir, { recursive: true });
+cpSync(join(root, 'adapters'), join(dir, 'adapters'), { recursive: true });
 writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
 
 let failed = 0;

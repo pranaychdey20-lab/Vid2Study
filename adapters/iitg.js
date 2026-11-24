@@ -59,14 +59,18 @@
     if (!m) return null;
     const [, sessionId, courseId] = m;
     const cacheKey = `course_${courseId}`;
+    // Some content-script contexts cannot access extension storage.
+    const cache = globalThis.chrome?.storage?.session;
     if (!force) {
-      const hit = (await chrome.storage.session.get(cacheKey).catch(() => ({})))[cacheKey];
-      if (hit) return (course = hit);
+      try {
+        const cached = await cache?.get(cacheKey);
+        if (cached?.[cacheKey]) return (course = cached[cacheKey]);
+      } catch { /* fetch the course directly if the cache is unavailable */ }
     }
     const res = await fetch(`/api/courses/student/${encodeURIComponent(courseId)}?sessionId=${encodeURIComponent(sessionId)}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`Course list failed (HTTP ${res.status}). Are you signed in?`);
     const parsed = { id: courseId, ...parseCourse(await res.json()) };
-    await chrome.storage.session.set({ [cacheKey]: parsed }).catch(() => {});
+    try { await cache?.set({ [cacheKey]: parsed }); } catch { /* the fetched list is still usable */ }
     return (course = parsed);
   }
 
