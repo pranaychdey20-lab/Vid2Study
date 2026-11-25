@@ -18,6 +18,9 @@ const [adapter] = window.__lhAdapters;
 const course = await adapter.listLectures(false);
 assert.equal(course.lectures[0].title, 'Lecture 01');
 assert.deepEqual(await adapter.listLectures(true), course);
+const ungrouped = window.__iitgParseCourse({ name: 'Direct lessons', modules: [{ lessons: [{ title: 'Lecture 02', file: { key: '02.mp4' } }] }] });
+assert.equal(ungrouped.lectures[0].chapter, '');
+assert.equal(ungrouped.lectures[0].title, 'Lecture 02');
 
 globalThis.chrome.storage = { session: {
   get: async () => { throw new Error('Access denied'); },

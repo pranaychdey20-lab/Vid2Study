@@ -90,6 +90,10 @@
 .rbtns .btn { padding: 3px 7px; font-size: 10px; }
 .rline { grid-column: 2; font-family: var(--mono); font-size: 11px; }
 .row .bar { grid-column: 2; }
+.live-log { grid-column: 2; font: 11px/1.4 var(--mono); color: #444; overflow-wrap: anywhere; margin-top: 4px; }
+.combined-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+.combined-row > * { grid-column: 1; }
+.combined-row .btn { justify-self: start; }
 .rerr { grid-column: 2; font-size: 11px; }
 
 /* ---- results panel ---- */

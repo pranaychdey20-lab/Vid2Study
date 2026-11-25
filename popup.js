@@ -48,4 +48,5 @@ $('globalOn').addEventListener('change', async () => {
 });
 
 $('lib').addEventListener('click', () => { chrome.tabs.create({ url: chrome.runtime.getURL('library.html') }); window.close(); });
+$('logs').addEventListener('click', () => { chrome.tabs.create({ url: chrome.runtime.getURL('logs.html') }); window.close(); });
 $('opts').addEventListener('click', () => { chrome.runtime.openOptionsPage(); window.close(); });

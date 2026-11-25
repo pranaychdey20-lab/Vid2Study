@@ -3,18 +3,26 @@
  * IndexedDB, renders them (KaTeX math, callouts, step diagrams), and handles
  * copy / zip bundle / printable view.
  */
-import { getResult, getFrame } from './lib/db.js';
+import { getResult, getFrame, putResult } from './lib/db.js';
+import { loadSettings } from './lib/settings.js';
 import { lectureHtml, writerLabel } from './lib/lecture-layout.js';
 import { paginate } from './lib/paginate.js';
 import { makeZip } from './lib/zip.js';
-import { fmtTime, sanitizeName, toCopyText, stripTimestamps } from './lib/common.js';
+import { nativeBridge } from './lib/llm.js';
+import { fmtTime, sanitizeName, toCopyText, stripTimestamps, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
 
 const params = new URLSearchParams(location.search);
 const key = params.get('key');
-const printView = params.get('print') === '1' && window === window.top;
+const previewView = (params.get('preview') === '1' || params.get('print') === '1') && window === window.top;
+const offerPractice = params.get('practice') === '1';
 const $ = (id) => document.getElementById(id);
 const objectUrls = [];
 let result = null;
+let paperJob = null;
+const openPractice = () => {
+  $('paperStatus').textContent = '';
+  $('paperDialog').showModal();
+};
 /** filename -> Blob */
 const images = new Map();
 
@@ -93,19 +101,22 @@ async function compactDataUrl(blob) {
   } catch { return blobToDataUrl(blob); }
 }
 
-async function buildStandaloneHtml() {
+async function buildStandaloneHtml(markdown = result.summary_markdown, preview = false) {
   const dataUrls = new Map();
   for (const [name, blob] of images) dataUrls.set(name, await compactDataUrl(blob));
   // printed / exported pages carry no video times (they stay in the stored notes, for the AI and "copy")
-  const body = lectureHtml(result, stripTimestamps(result.summary_markdown), {
+  if (result.source !== 'combined') markdown = stripTimestamps(markdown);
+  const body = lectureHtml(result, markdown, {
     imageSrc: (src) => dataUrls.get(src.replace(/^images\//, '')) || src,
-    math: renderMath
+    math: renderMath,
+    pageNumbers: !preview
   }, true);
-  return paginate(`<!doctype html>
+  const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escHtml(result.title)}</title>
 <style>${body.includes("class=\"katex") ? await inlineKatexCss() : ""}</style>
 <style>
-  body { font: 11pt/1.6 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #000; background: #fff; max-width: 820px; margin: 24px auto; padding: 0 20px; }
+  body { font: 11pt/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #000; background: #fff; margin: 0; }
+  @media screen { body { max-width: 1100px; margin: 24px auto; padding: 0 clamp(12px, 2vw, 24px); } }
   h1 { font-size: 24pt; font-weight: 800; line-height: 1.2; margin: 0 0 6px; }
   h2 { font-size: 14pt; font-weight: 800; text-transform: uppercase; border-top: 3px solid #000; padding-top: 6px; margin-top: 26px; }
   h3 { font-size: 12pt; font-weight: 800; } .meta { font: 9pt ui-monospace, Consolas, "Courier New", monospace; color: #444; margin-bottom: 16px; }
@@ -115,13 +126,21 @@ async function buildStandaloneHtml() {
   code, .math { font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 9.5pt; }
   .katex-block .katex, .math .katex { font-family: KaTeX_Main, "Times New Roman", serif; }
   pre { background: #f2f2f2; border: 1px solid #000; padding: 8px; white-space: pre-wrap; }
-  table { border-collapse: collapse; width: 100%; font-size: 10pt; } th, td { border: 1px solid #000; padding: 4px 8px; text-align: left; vertical-align: top; } th { background: #f2f2f2; }
+  table { border-collapse: collapse; width: 100%; table-layout: auto; font-size: 10pt; line-height: 1.4; }
+  thead { display: table-header-group; }
+  th, td { border: 1px solid #000; padding: 5px 7px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  th { background: #f2f2f2; }
+  th:first-child, td:first-child { min-width: 8ch; }
+  #references + table td:first-child { width: 21%; }
   blockquote { border-left: 4px solid #000; margin: 8px 0; padding: 2px 12px; }
   ${NOTES_CSS}
-  @media print { body { margin: 0; max-width: none; } img, table, pre, figure { page-break-inside: avoid; } h2, h3 { page-break-after: avoid; } }
+  @page { size: A4; margin: 9mm 8mm; }
+  ${result.source === 'combined' ? '.snapshot { display: block; } .snapshot li { break-inside: avoid; } .snapshot ol, .snapshot ul { padding-left: 1.5em; }' : ''}
+  @media print { html, body { margin: 0; padding: 0; max-width: none; } img, pre, figure { break-inside: avoid; } h2, h3 { break-after: avoid; } }
 </style></head><body>
 ${body}
-</body></html>`);
+</body></html>`;
+  return !preview && body.includes('class="page-ref"') ? paginate(html) : html;
 }
 
 async function download(blob, filename) {
@@ -160,6 +179,9 @@ async function downloadZip() {
   const files = [
     { name: `${folder}/summary.md`, data: result.summary_markdown },
     ...(result.sourceRecord ? [{ name: `${folder}/lecture-sources.txt`, data: result.sourceRecord }] : []),
+    ...(result.writerReplies?.length ? [{ name: `${folder}/writer-replies.txt`, data: result.writerReplies.map((reply, i) =>
+      `=== Reply ${i + 1}${reply.batch ? ` · Batch ${reply.batch}` : ''} · ${reply.task} · ${reply.model}${reply.truncated ? ' · Truncated' : ''} ===\n${reply.text}`).join('\n\n') }] : []),
+    ...(result.coverage?.length ? [{ name: `${folder}/coverage.json`, data: JSON.stringify(result.coverage, null, 2) }] : []),
     { name: `${folder}/summary.html`, data: await buildStandaloneHtml() },
     {
       name: `${folder}/frames.json`,
@@ -179,18 +201,57 @@ async function downloadZip() {
   await download(await makeZip(files), `${folder}.zip`);
 }
 
-async function openPrintable() {
+async function openPreview() {
   const url = new URL(chrome.runtime.getURL('results.html'));
   url.searchParams.set('key', key);
-  url.searchParams.set('print', '1');
+  url.searchParams.set('preview', '1');
   await chrome.tabs.create({ url: url.href });
 }
 
-async function renderPrintable() {
-  $('status').textContent = 'Preparing printable notes…';
-  const html = await buildStandaloneHtml();
+async function renderPreview() {
+  $('status').textContent = 'Preparing the notes preview…';
+  const html = await buildStandaloneHtml(result.summary_markdown, true);
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
   location.replace(url);
+}
+
+async function savePdf() {
+  const button = $('print');
+  button.disabled = true;
+  button.textContent = 'Saving PDF…';
+  try {
+    const html = await buildStandaloneHtml();
+    const bridge = await chrome.runtime.sendMessage({ type: 'BRIDGE_INFO', start: true });
+    if (!bridge?.ok) throw new Error('Start the local bridge to save a PDF. You can also print from Preview.');
+    const requestPdf = (url, token) => {
+      const base = new URL(url);
+      if (base.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname)) {
+        throw new Error('PDF saving requires a local bridge address.');
+      }
+      return fetch(new URL('/pdf', base), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bridge-token': token },
+        body: JSON.stringify({ html }), signal: AbortSignal.timeout(150000)
+      });
+    };
+    let response;
+    try { response = await requestPdf(bridge.url, bridge.token); }
+    catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      const started = await nativeBridge('start');
+      if (!started.ok) throw new Error('The bridge is not running. Start it and try again.');
+      response = await requestPdf(`http://127.0.0.1:${started.port || 8787}`, started.token);
+    }
+    if (!response.ok || !response.headers.get('Content-Type')?.startsWith('application/pdf')) {
+      if (response.status === 404) throw new Error('Restart the bridge to enable PDF saving.');
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.error?.message || 'The bridge could not create the PDF.');
+    }
+    await download(await response.blob(), `${sanitizeName(result.title, 'lecture')}.pdf`);
+    toast('PDF saved');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Print';
+  }
 }
 
 async function init() {
@@ -207,7 +268,8 @@ async function init() {
     const blob = await getFrame(`${key}/${f.filename}`);
     if (blob) images.set(f.filename, blob);
   }
-  if (printView) return renderPrintable();
+  if (previewView) return renderPreview();
+  $('practice').hidden = !(await loadSettings()).practiceQuestions;
   const blobUrls = new Map();
   for (const [name, blob] of images) {
     const u = URL.createObjectURL(blob);
@@ -218,10 +280,13 @@ async function init() {
   document.title = result.title;
   const tokens = result.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '';
   $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${writerLabel(result)}${tokens}`;
-  $('out').innerHTML = lectureHtml(result, result.summary_markdown, {
-    imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
-    math: renderMath
-  });
+  const draw = () => {
+    $('out').innerHTML = lectureHtml(result, result.summary_markdown, {
+      imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
+      math: renderMath
+    });
+  };
+  draw();
   $('status').remove();
 
   $('out').addEventListener('click', (e) => {
@@ -231,6 +296,57 @@ async function init() {
     $('lb').hidden = false;
   });
   $('lb').addEventListener('click', (e) => { if (e.target.id !== 'lbopen') $('lb').hidden = true; });
+  $('paperForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (paperJob) return;
+    const withAssignments = $('useAssignments').value === 'yes';
+    const text = withAssignments ? $('assignmentText').value : '';
+    const files = withAssignments ? [...$('assignmentFiles').files] : [];
+    const status = $('paperStatus');
+    if (withAssignments && !text.trim() && !files.length) {
+      status.textContent = 'Paste questions or attach at least one screenshot.';
+      return;
+    }
+    paperJob = new AbortController();
+    const { signal } = paperJob;
+    $('paperSubmit').disabled = true;
+    $('paperCancel').textContent = 'Cancel generation';
+    status.textContent = 'Preparing the practice paper';
+    try {
+      const { writePracticePaper, withoutPractice } = await import('./lib/practice-paper.js');
+      result = await navigator.locks.request(PROCESSING_LOCK, { mode: 'shared', signal }, () =>
+        navigator.locks.request(lectureLockName(key), { signal }, async () => {
+        const saved = await getResult(key);
+        if (!saved) throw new Error('These notes are no longer saved.');
+        const paper = await writePracticePaper(saved, await loadSettings(), {
+          text, files, signal, onWait: value => { status.textContent = value; },
+          prepareNotesPdf: markdown => {
+            status.textContent = 'Preparing the combined notes for PDF attachment';
+            return buildStandaloneHtml(markdown);
+          }
+        });
+        signal.throwIfAborted();
+        const addPaper = markdown => `${withoutPractice(markdown)}\n\n${paper}`;
+        const updated = { ...saved, summary_markdown: addPaper(saved.summary_markdown), summary_raw: addPaper(saved.summary_raw) };
+        // Full deletion can happen from a second Saved notes tab during generation.
+        if (!await getResult(key)) throw new Error('These notes are no longer saved.');
+        await putResult(updated);
+        return updated;
+      }));
+      draw();
+      $('paperDialog').close();
+      $('paperForm').reset();
+      $('assignmentInputs').hidden = true;
+      toast('Practice paper saved');
+    } catch (error) {
+      status.textContent = signal.aborted ? 'Practice paper cancelled.' : error.message || String(error);
+    } finally {
+      paperJob = null;
+      $('paperSubmit').disabled = false;
+      $('paperCancel').textContent = 'Not now';
+    }
+  });
+  if (offerPractice && !$('practice').hidden && !/^##[ \t]+Practice questions[ \t]*$/im.test(result.summary_markdown)) openPractice();
 }
 
 $('copy').addEventListener('click', () => result && copyText());
@@ -240,7 +356,15 @@ $('debug').addEventListener('click', () => {
   if (!result?.debug) return;
   window.open(URL.createObjectURL(new Blob([result.debug], { type: 'text/plain;charset=utf-8' })), '_blank');
 });
-$('print').addEventListener('click', () => result && openPrintable().catch((e) => toast(`Failed: ${e.message}`)));
-addEventListener('pagehide', () => objectUrls.forEach((u) => URL.revokeObjectURL(u)));
+$('print').addEventListener('click', () => result && savePdf().catch(e => toast(e.message)));
+$('preview').addEventListener('click', () => result && openPreview().catch(e => toast(e.message)));
+$('practice').addEventListener('click', openPractice);
+$('useAssignments').addEventListener('change', () => { $('assignmentInputs').hidden = $('useAssignments').value !== 'yes'; });
+$('paperCancel').addEventListener('click', () => {
+  if (paperJob) paperJob.abort();
+  else $('paperDialog').close();
+});
+$('paperDialog').addEventListener('cancel', event => { if (paperJob) { event.preventDefault(); paperJob.abort(); } });
+addEventListener('pagehide', () => { paperJob?.abort(); objectUrls.forEach((u) => URL.revokeObjectURL(u)); });
 
 init().catch((e) => { $('status').textContent = `Could not load summary: ${e.message}`; });

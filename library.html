@@ -17,6 +17,11 @@
 <div class="top"><h1>Saved notes</h1></div>
 <main>
   <input id="q" type="text" placeholder="Search by title or course">
+  <div class="row">
+    <button id="clearProcessing" type="button">Clear processing files</button>
+    <label class="check"><input id="includeFigures" type="checkbox"> Also remove figures from saved notes</label>
+  </div>
+  <div id="status" role="status"></div>
   <div id="list"></div>
 </main>
 <script type="module" src="library.js"></script>

@@ -3,15 +3,13 @@
  * Checks Node, playwright-core, Chrome, Claude CLI and both sign-ins; installs what is missing; asks you to sign in
  * once where needed (a window opens, you type the password yourself); registers lecturehelper://start (Windows) so
  * the extension's Options page can start the bridge; then starts it.
- * Flags: --no-claude / --no-gemini / --no-langdock to skip a backend, --langdock to sign in to Langdock without asking, --check to only report.
+ * Flags: --no-claude / --no-gemini to skip a backend, --check to only report.
  */
-import { createInterface } from 'node:readline/promises';
 import { readFile } from 'node:fs/promises';
-import { nodeCheck, playwrightCheck, chromeCheck, claudeCheck, claudeLoginCheck, geminiLoginCheck, langdockLoginCheck, fixes, registerNative } from './checks.mjs';
+import { nodeCheck, playwrightCheck, chromeCheck, claudeCheck, claudeLoginCheck, geminiLoginCheck, fixes, registerNative } from './checks.mjs';
 
 const args = new Set(process.argv.slice(2));
-const wantClaude = !args.has('--no-claude'), wantGemini = !args.has('--no-gemini'), wantLangdock = !args.has('--no-langdock'), checkOnly = args.has('--check');
-const ask = async (q) => { const rl = createInterface({ input: process.stdin, output: process.stdout }); try { return await rl.question(q); } finally { rl.close(); } };
+const wantClaude = !args.has('--no-claude'), wantGemini = !args.has('--no-gemini'), checkOnly = args.has('--check');
 let problems = 0;
 const idArg = process.argv.includes('--extension-id') ? process.argv[process.argv.indexOf('--extension-id') + 1] : undefined;
 const line = (ok, text) => console.log(`${ok ? '[ ok ]' : '[FAIL]'} ${text}`);
@@ -63,18 +61,6 @@ if (wantGemini) {
       console.log('\nFinish signing in to Google in the Chrome window, then close that window.\n');
       return running ? runningGemini('POST') : fixes.geminiLogin(true);
     });
-  }
-}
-if (wantLangdock && playwrightCheck().ok && chromeCheck().ok) {
-  // Langdock is optional: only ask when it is not signed in. A signed-in profile is what lets the bridge renew the cookie by itself.
-  const ok = await step('Langdock sign-in', langdockLoginCheck);
-  if (!ok && !checkOnly) {
-    const go = args.has('--langdock') || (process.stdin.isTTY && /^y/i.test(await ask('Set up Langdock now (one-time sign-in, optional)? [y/N] ')));
-    if (go) {
-      console.log('\nA Chrome window opens: sign in to Langdock, wait for the chat home, then CLOSE the window.\n');
-      await fixes.langdockLogin(true);
-      await step('Langdock sign-in', langdockLoginCheck);
-    } else { problems--; console.log('       (skipped: run "node setup.mjs --langdock" any time)'); }
   }
 }
 if (wantClaude) {

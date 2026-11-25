@@ -133,7 +133,7 @@ globalThis.fetch = async () => { throw new Error('offline'); };
   const r = await getResult('sq1');
   assert.match(r.summary_markdown, /> \*\*Watch Out:\*\* Frame F1 was read as: .*Forget not the tyranny/, 'unverified visual transcription is preserved with uncertainty');
   assert.ok(!r.frames.some((f) => f.index === 1), 'and no figure was made of it');
-  assert.match(r.summary_markdown, /## References[\s\S]*Forget not the tyranny of this wall/, 'the quote is also researched and listed under References');
-  assert.match(calls.find((c) => c.task === 'REFERENCES').prompt, /\[quote\] “Forget not the tyranny of this wall[^\n]*Unknown, Graffiti on the Berlin Wall/);
+  assert.match(r.summary_markdown, /## References[\s\S]*Forget not the tyranny of this wall[^\n]*Unknown, Graffiti on the Berlin Wall/);
+  assert.ok(!calls.some(c => c.task === 'REFERENCES'));
   console.log('quote callout through the pipeline ok');
 }

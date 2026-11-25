@@ -4,10 +4,9 @@
  * skip the stage when it is optional, or cancel the job. Saving a model resumes the job straight away.
  * Every value that comes from a provider is written with textContent, never as HTML.
  */
-import { loadSettings, saveSettings } from './lib/settings.js';
+import { loadSettings, saveSettings, providerModelIds } from './lib/settings.js';
 import { listModels, signInGemini } from './lib/llm.js';
 import { checkModel, checkVision } from './lib/modelcheck.js';
-import { MODELS } from './lib/common.js';
 import { adviceFor, needsGeminiSignIn } from './lib/stagefix.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +18,6 @@ let info = null;    // what failed
 let tested = null;  // the "provider|model" last tested OK or not, so a failed test can be overridden with "Continue anyway"
 let busy = false;
 
-const modelIds = (p) => (p?.models?.length ? p.models : p?.type === 'gemini' ? MODELS.map((m) => m.id) : []);
 const providersFor = () => (info.slot === 'stt' ? S.providers.filter((p) => p.type === 'openai') : S.providers);
 /** cheap / vision may be left empty (they then use the Strong AI); the speech slot may be empty (Whisper on this computer) */
 const emptyLabel = () => (info.slot === 'stt' ? 'Whisper on this computer (no cloud)' : info.slot === 'strong' ? '' : info.slot === 'vision' || info.slot === 'digest' ? 'Same as the Cheap AI' : `Same as the Strong AI (${S.strong.model || 'not set'})`);
@@ -32,7 +30,7 @@ function say(text, ok) {
 
 function fillModels() {
   const p = S.providers.find((x) => x.id === $('prov').value);
-  const ids = modelIds(p);
+  const ids = providerModelIds(p);
   $('pick').innerHTML = '';
   $('pick').append(new Option(ids.length ? `Pick a model (${ids.length})` : p ? 'No models loaded: type a name or press Load models' : '', ''), ...ids.map((m) => new Option(m, m)));
   $('pick').value = ids.includes($('model').value.trim()) ? $('model').value.trim() : '';
@@ -53,9 +51,10 @@ async function init() {
 
   $('vTitle').textContent = r.item.title || '(untitled)';
   $('vStage').textContent = info.label;
-  $('vModel').textContent = `${info.slotLabel}: ${info.model || 'none'}${info.providerName ? ` (${info.providerName})` : ''}${info.status != null ? ` · HTTP ${info.status}` : ''}`;
-  $('vReason').textContent = info.reason;
-  $('vAdvice').textContent = adviceFor(info);
+  const providerAvailable = !info.provider || S.providers.some(p => p.id === info.provider);
+  $('vModel').textContent = providerAvailable ? `${info.slotLabel}: ${info.model || 'none'}${info.providerName ? ` (${info.providerName})` : ''}${info.status != null ? ` · HTTP ${info.status}` : ''}` : info.slotLabel;
+  $('vReason').textContent = providerAvailable ? info.reason : 'The provider used on the previous attempt is no longer configured.';
+  $('vAdvice').textContent = providerAvailable ? adviceFor(info) : 'Resume with your saved settings or choose a replacement model below.';
   $('geminiLoginRow').hidden = !needsGeminiSignIn(info) || !S.providers.some((p) => p.id === info.provider && p.type === 'geminiweb');
   $('slotNote').textContent = info.fallback
     ? `The ${info.slotLabel} is not set, so the Strong AI was used for this step. Pick the model this role should use from now on, or choose "Same as the Strong AI" and change the Strong AI instead.`
@@ -66,8 +65,10 @@ async function init() {
   $('prov').innerHTML = '';
   if (info.slot !== 'strong') $('prov').append(new Option(emptyLabel(), ''));
   $('prov').append(...list.map((p) => new Option(`${p.name}${p.type === 'gemini' ? ' (Gemini)' : p.type === 'anthropic' ? ' (Anthropic)' : ''}`, p.id)));
-  $('prov').value = list.some((p) => p.id === info.provider) ? info.provider : list[0]?.id || '';
-  $('model').value = info.model || '';
+  const saved = S[info.slot];
+  const selected = list.find(p => p.id === saved?.provider);
+  $('prov').value = selected?.id || (info.slot === 'strong' ? list[0]?.id || '' : '');
+  $('model').value = selected ? saved.model || '' : '';
   fillModels();
 
   if (info.skip) {
@@ -163,12 +164,27 @@ $('go').addEventListener('click', async () => {
       tested = r.ok ? 'ok' : 'bad';
       if (!r.ok) { $('go').textContent = 'Continue anyway'; return; }
     }
-    await saveSettings({ [info.slot]: providerId ? { provider: providerId, model } : { provider: '', model: '' } });
+    const provider = S.providers.find(p => p.id === providerId);
+    const custom = provider && !providerModelIds(provider).includes(model);
+    await saveSettings({ [info.slot]: { provider: providerId, model, ...(custom ? { custom: true } : {}) } });
     say('Saved. Resuming...', true);
     const res = await send({ type: 'RESUME_JOB', id });
     if (res?.error) { say(res.error, false); return; }
     window.close();
-  } finally { busy = false; $('go').disabled = false; $('skip').disabled = false; $('cancel').disabled = false; }
+  } catch (error) { say(error.message || String(error), false); }
+  finally { busy = false; $('go').disabled = false; $('skip').disabled = false; $('cancel').disabled = false; }
+});
+
+$('resumeSaved').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true;
+  $('resumeSaved').disabled = true;
+  try {
+    const response = await send({ type: 'RESUME_JOB', id });
+    if (response?.error || !response?.ok) throw new Error(response?.error || 'Could not resume the job.');
+    window.close();
+  } catch (error) { say(error.message, false); }
+  finally { busy = false; $('resumeSaved').disabled = false; }
 });
 
 $('skip').addEventListener('click', async () => {

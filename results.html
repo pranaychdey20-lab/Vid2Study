@@ -32,18 +32,42 @@
   .lightbox a { color: var(--w); margin-top: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--k); color: var(--w); border: 2px solid var(--w); padding: 6px 12px; font: 700 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
+  #paperDialog { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 18px; border: 3px solid var(--k); }
+  #paperDialog::backdrop { background: rgba(0,0,0,.55); }
+  #paperDialog label { display: block; margin: 8px 0; }
+  #paperDialog textarea { display: block; width: 100%; min-height: 108px; }
+  #paperDialog h2 { margin-top: 0; }
 </style>
 </head>
 <body>
   <div class="bar2">
     <button id="copy" title="Copy the text summary (figures become [Figure N] references)">Copy text</button>
     <button id="zip" title="summary.md + summary.html + images + frames.json">Bundle .zip</button>
-    <button id="print" title="Open a printable page, then Save as PDF">Print</button>
+    <button id="print" title="Save the notes as a PDF">Print</button>
+    <button id="preview" title="Open the full notes in a browser tab">Preview</button>
+    <button id="practice" hidden>Generate practice paper</button>
     <button id="debug" title="TEMP: full plain-text log of every step (transcript, frames, AI calls)" hidden>Debug dump</button>
   </div>
   <div class="meta" id="meta"></div>
   <div class="status" id="status">Loading...</div>
   <article id="out"></article>
+  <dialog id="paperDialog" aria-labelledby="paperTitle">
+    <h2 id="paperTitle">Generate practice paper</h2>
+    <form id="paperForm">
+      <label for="useAssignments">Add assignment or sample questions?</label>
+      <select id="useAssignments"><option value="no">No</option><option value="yes">Yes</option></select>
+      <div id="assignmentInputs" hidden>
+        <label for="assignmentText">Paste assignment or sample questions</label>
+        <textarea id="assignmentText"></textarea>
+        <label for="assignmentFiles">Upload question screenshots</label>
+        <input id="assignmentFiles" type="file" accept="image/*" multiple>
+        <p>OCR runs locally. Images are sent for questions that need visual interpretation or OCR verification.</p>
+      </div>
+      <div id="paperStatus" role="status" aria-live="polite"></div>
+      <button type="submit" id="paperSubmit">Generate</button>
+      <button type="button" id="paperCancel">Not now</button>
+    </form>
+  </dialog>
   <div class="lightbox" id="lb" hidden><img id="lbimg" alt=""><a id="lbopen" target="_blank" rel="noopener">Open original</a></div>
   <div class="toast" id="toast"></div>
   <script src="lib/katex/katex.min.js"></script>

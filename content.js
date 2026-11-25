@@ -31,6 +31,7 @@
   let selectedId = null;
   let expanded = false;
   let runningKey = null;
+  let pendingCombinedNotes = null;
   /** cache key -> { id, info } of a summary that is paused because an AI model failed (see SUMMARY_PAUSED) */
   const pausedBy = new Map();
   let capturing = false;
@@ -70,6 +71,7 @@
         <div class="prog" hidden>
           <div class="ptext"></div>
           <div class="bar"><i></i></div>
+          <div class="live-log" hidden></div>
           <button class="link cancel" data-a="cancel">Cancel</button>
         </div>
         <div class="err msg" hidden></div>
@@ -83,10 +85,12 @@
           <button class="btn" data-a="newonly" title="Select every video that has no notes yet">Without notes</button>
           <button class="btn primary" data-a="dlsel">Download selected</button>
           <button class="btn primary" data-a="sumsel">Summarize selected</button>
+          <button class="btn primary" data-a="combine" disabled>Summarize together</button>
           <button class="btn" data-a="qcancel">Cancel queue</button>
           <button class="btn" data-a="refresh">Refresh list</button>
           <button class="btn" data-a="fromfile">From file</button>
         </div>
+        <div class="msg err combined-error" role="status" hidden></div>
         <div class="list"></div>
       </div>
       <div class="panel" hidden>
@@ -172,9 +176,10 @@
     refreshCache(sources.get(rec.id));
   }
 
-  function openPanel(key, title) {
+  function openPanel(key, title, offerPractice = false) {
+    if (pendingCombinedNotes?.url === key) pendingCombinedNotes = null;
     ptitle.textContent = title || cached.get(key)?.title || 'Notes';
-    frame.src = `${chrome.runtime.getURL('results.html')}?key=${encodeURIComponent(key)}`;
+    frame.src = `${chrome.runtime.getURL('results.html')}?key=${encodeURIComponent(key)}${offerPractice ? '&practice=1' : ''}`;
     panel.hidden = false;
     render();
   }
@@ -241,7 +246,19 @@
   let states = {};
   /** key -> latest PROGRESS message */
   const live = new Map();
+  const latestLog = new Map();
+  const logLine = url => latestLog.has(url) ? `<div class="live-log">Latest log · ${esc(latestLog.get(url))}</div>` : '';
+  function showCardLog(url) {
+    const el = $('.prog .live-log');
+    el.hidden = !latestLog.has(url);
+    el.textContent = el.hidden ? '' : `Latest log · ${latestLog.get(url)}`;
+  }
+  function stepBar(value) {
+    const percent = Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
+    return `<div class="bar${percent == null ? ' indet' : ''}" role="progressbar" aria-label="Current step"${percent == null ? '' : ` aria-valuenow="${percent}"`}><i style="width:${percent ?? 0}%"></i></div>`;
+  }
   let drawerError = '';
+  let combined = null;
   let refreshTimer = 0;
   const STAGES = { fetch: 'FETCH', source: 'SOURCE', transcribe: 'LISTEN', scenes: 'SLIDES', ocr: 'OCR', vision: 'DIAGRAMS', extract: 'WATCH', upload: 'UPLOAD', processing: 'PROCESSING', frames: 'FRAMES', notes: 'NOTES', final: 'FINISH', done: 'DONE' };
 
@@ -259,8 +276,17 @@
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(async () => {
       if (drawer.hidden || !course) return;
-      const r = await send({ type: 'GET_STATES', urls: course.lectures.map((l) => l.url) });
-      if (r?.states) { states = r.states; drawRows(); }
+      const currentCourse = course;
+      const r = await send({ type: 'GET_STATES', courseId: course.id, urls: course.lectures.map((l) => l.url) });
+      if (r?.states && course === currentCourse) {
+        states = r.states;
+        combined = r.combined;
+        for (const { progress, log } of r.liveJobs || []) {
+          if (progress && !live.has(progress.url)) live.set(progress.url, progress);
+          if (log && !latestLog.has(log.url)) latestLog.set(log.url, log.text);
+        }
+        drawRows();
+      }
     }, 250);
   }
 
@@ -304,6 +330,15 @@
     if (!course.lectures.length) { list.innerHTML = '<div class="msg lbl">No videos in this course.</div>'; return; }
     const scroll = list.scrollTop;
     let html = '';
+    if (combined) {
+      const progress = live.get(combined.url);
+      const active = combined.status === 'running';
+      const status = active ? progress?.text || 'Preparing videos' : combined.message || combined.status;
+      html += `<div class="row combined-row${active ? ' active' : ''}"><b>Combined notes</b><div class="rline" role="status">${esc(status)}</div>
+        ${active ? stepBar(progress?.percent) + logLine(combined.url) : ''}
+        ${combined.status === 'done' ? '<button class="btn" data-a="combinedView">Open combined notes</button>' : ''}
+        ${combined.status === 'paused' ? '<button class="btn" data-a="combinedFix">Resume combined notes</button>' : ''}</div>`;
+    }
     let lastMod = null, lastChap = null;
     course.lectures.forEach((l, i) => {
       if (l.module !== lastMod) {
@@ -321,7 +356,7 @@
         <input type="checkbox" data-a="chk" ${checked.has(l.url) ? 'checked' : ''} aria-label="Select">
         <div class="rtitle">${esc(l.title)}<span class="rdur">${esc(l.duration)}</span></div>
         <div class="rstat">${f.tags.map((t) => `<span class="tag${t.on ? ' on' : ''}${t.bad ? ' bad' : ''}">${esc(t.t)}</span>`).join('')}</div>
-        ${f.active ? `<div class="bar${f.percent == null ? ' indet' : ''}"><i style="width:${f.percent ?? 0}%"></i></div><div class="rline">${esc(f.line)}</div>` : ''}
+        ${f.active ? stepBar(f.percent) + `<div class="rline">${esc(f.line)}</div>` + logLine(l.url) : ''}
         ${f.err ? `<div class="rerr err">${esc(f.err)}</div>` : ''}
         <div class="rbtns">
           <button class="btn" data-a="rdl" ${busy ? 'disabled' : ''}>${st.item?.status === 'error' && st.item.kind === 'download' ? 'Retry' : 'Download'}</button>
@@ -341,6 +376,8 @@
     const todo = sel.filter((l) => !states[l.url]?.summary && !['queued', 'running'].includes(states[l.url]?.item?.status)).length;
     $('[data-a="sumsel"]').textContent = sel.length ? `Summarize selected (${todo}${todo !== sel.length ? ` of ${sel.length}` : ''})` : 'Summarize selected';
     $('[data-a="dlsel"]').textContent = sel.length ? `Download selected (${sel.length})` : 'Download selected';
+    $('[data-a="combine"]').disabled = sel.length < 2;
+    $('[data-a="combine"]').textContent = sel.length > 1 ? `Summarize together (${sel.length})` : 'Summarize together';
   }
 
   /** Queue downloads or summaries for lectures (skips what is already saved / summarized). */
@@ -355,6 +392,25 @@
     if (drawerError) drawRows();
   }
 
+  async function combineSelected() {
+    const lectures = course?.lectures.filter(l => checked.has(l.url)) || [];
+    if (lectures.length < 2) return;
+    const req = { type: 'COMBINE_LECTURES', lectures, course: course.name, courseId: course.id };
+    const error = $('.combined-error');
+    const fail = message => { error.textContent = message; error.hidden = false; };
+    error.hidden = true;
+    const preview = await send({ ...req, preview: true });
+    if (!preview?.batches) { fail(preview?.error || 'Could not plan the combined notes.'); return; }
+    const plan = preview.batches.map(({ chapter, duration, titles }, i) =>
+      `${i + 1}. ${chapter || 'Videos in course order'} · ${duration ? `${Math.ceil(duration / 60)} min` : 'duration unknown'}\n${titles.join(', ')}`).join('\n\n');
+    const count = preview.batches.length;
+    if (!confirm(`Create one combined PDF from ${count} writing ${count === 1 ? 'batch' : 'batches'}?\n\n${plan}`)) return;
+    const r = await send(req);
+    if (r?.ready) openPanel(r.url, r.title, true);
+    else if (!r?.ok) fail(r?.error || 'Could not queue the combined notes.');
+    refreshStates();
+  }
+
   // ---------- events ----------
   root.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-a]');
@@ -364,7 +420,10 @@
     const s = current();
     if (a === 'expand') { expanded = true; render(); }
     else if (a === 'close') { expanded = false; render(); }
-    else if (a === 'pclose') { panel.hidden = true; frame.src = 'about:blank'; render(); }
+    else if (a === 'pclose') {
+      if (pendingCombinedNotes) openPanel(pendingCombinedNotes.url, pendingCombinedNotes.title, true);
+      else { panel.hidden = true; frame.src = 'about:blank'; render(); }
+    }
     else if (a === 'dopen') openDrawer(false);
     else if (a === 'dclose') { drawer.hidden = true; render(); }
     else if (a === 'refresh') openDrawer(true);
@@ -379,6 +438,9 @@
     else if (a === 'newonly') { checked.clear(); course?.lectures.forEach((l) => { if (!states[l.url]?.summary) checked.add(l.url); }); drawRows(); }
     else if (a === 'dlsel') enqueue('download', course.lectures.filter((l) => checked.has(l.url)));
     else if (a === 'sumsel') enqueue('summary', course.lectures.filter((l) => checked.has(l.url)));
+    else if (a === 'combine') await combineSelected();
+    else if (a === 'combinedView' && combined) openPanel(combined.url, combined.title, true);
+    else if (a === 'combinedFix' && combined) send({ type: 'OPEN_MODEL_FIX', id: combined.id });
     else if (a === 'qcancel') { await send({ type: 'CANCEL' }); refreshStates(); }
     else if (a === 'fromfile') send({ type: 'OPEN_LOCAL' });
     else if (a === 'rdl') { const l = rowL(); if (l) enqueue('download', [l]); }
@@ -471,6 +533,8 @@
         render();
         break;
       case 'SUMMARY_RESUMED':
+        live.delete(msg.url);
+        latestLog.delete(msg.url);
         pausedBy.delete(msg.url);
         showError('');
         runningKey = msg.url;
@@ -478,20 +542,31 @@
         render();
         refreshStates();
         break;
+      case 'LIVE_JOB_LOG':
+        latestLog.set(msg.url, msg.text);
+        if (current() && msg.url === keyOf(current())) showCardLog(msg.url);
+        if (!drawer.hidden) drawRowsSoon();
+        break;
       case 'PROGRESS':
         pausedBy.delete(msg.url);
         live.set(msg.url, msg);
         if (!drawer.hidden) drawRowsSoon();
         if (msg.stage === 'download') { if (current() && msg.url === current().url) dlBtn.textContent = msg.percent != null ? `${msg.percent}%` : 'Fetching'; break; }
         runningKey = msg.url;
-        if (current() && msg.url === keyOf(current())) { setProgress(msg); render(); }
+        if (current() && msg.url === keyOf(current())) { setProgress(msg); showCardLog(msg.url); render(); }
         break;
       case 'SUMMARY_DONE':
+        live.delete(msg.url);
+        latestLog.delete(msg.url);
         runningKey = null;
         pausedBy.delete(msg.url);
         cached.set(msg.url, { cached: true, title: msg.title });
         render();
-        if (current() && msg.url === keyOf(current())) { if (drawer.hidden) openPanel(msg.url, msg.title); }
+        if (msg.combined) {
+          if (panel.hidden) openPanel(msg.url, msg.title, true);
+          else pendingCombinedNotes = { url: msg.url, title: msg.title };
+          refreshStates();
+        } else if (current() && msg.url === keyOf(current())) { if (drawer.hidden) openPanel(msg.url, msg.title); }
         // The page moved on (e.g. YouTube autoplay went to the next video): still show the finished notes.
         else if (panel.hidden) openPanel(msg.url, msg.title);
         break;

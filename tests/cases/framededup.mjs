@@ -103,8 +103,6 @@ const face = (g, v) => { const o = g.slice(); for (let y = 60; y < 88; y++) for 
   const pr = await import('./lib/prompts.js');
   assert.deepEqual(pr.readMathBatch('=== 1 ===\nA fixed\n\n=== 3 ===\nC fixed', 3), ['A fixed', '', 'C fixed']);
   assert.match(pr.fixMathBatchPrompt(['a', 'b']), /=== 2 ===\nb/);
-  assert.equal(lp.batchQuery(['rotation matrix about x axis rotation', 'the rotation matrix'], 'Robotics'), 'matrix rotation Robotics');
-  assert.equal(lp.batchQuery(['hello'], 'X'), '', 'too little to search for');
   assert.match(pr.selectPrompt({ title: 't', frames: [{ id: 'F1', time: '00:01' }], web: '- hint' }), /WEB HINTS[\s\S]*- hint/);
   console.log('trim / math batch / web query ok');
 }

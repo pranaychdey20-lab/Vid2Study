@@ -26,11 +26,11 @@
       <select id="preset" style="width:auto;flex:1"></select>
       <button id="addProv" type="button">Add provider</button>
     </div>
-    <div class="hint">Paste just the key: the service (Gemini, Groq, OpenAI, Anthropic, OpenRouter, xAI, DeepSeek, Qwen, ...) is recognised from it, and its URL and models are filled in. Services with unrecognisable keys (Mistral, Together, Ollama, your own server) need the URL as well. Providers save automatically; press Save below for the other settings.</div>
-    <div class="hint"><b>ChatGPT (Codex CLI)</b>, <b>Claude CLI</b>, <b>Gemini web</b>, <b>Langdock</b> and <b>yt-dlp</b> use the local bridge. On Windows, run <code>bridge/Start-Bridge.cmd</code> once to enable automatic startup and token setup. To use ChatGPT Plus, install Codex CLI with <code>npm install -g @openai/codex</code> if needed, then run <code>codex login</code> and sign in with ChatGPT. Add <b>ChatGPT (Codex CLI)</b> below and select a model with a reasoning level, such as <code>gpt-6.2-sol:high</code>. Other bridge providers use names such as <code>sonnet:high</code>, <code>hydrogen-low</code> or <code>GPT-6.2 Astra:medium</code>.</div>
+    <div class="hint">Paste just the key: the service (Gemini, Groq, OpenAI, Anthropic, OpenRouter, xAI, DeepSeek, Qwen, ...) is recognised from it, and its URL and models are filled in. Services with unrecognisable keys (Mistral, Together, Ollama, your own server) need the URL as well. Settings save automatically as you edit them.</div>
+    <div class="hint"><b>ChatGPT (Codex CLI)</b>, <b>Claude CLI</b>, <b>Gemini web</b> and <b>yt-dlp</b> use the local bridge. On Windows, run <code>bridge/Start-Bridge.cmd</code> once to enable automatic startup and token setup. To use ChatGPT Plus, install Codex CLI with <code>npm install -g @openai/codex</code> if needed, then run <code>codex login</code> and sign in with ChatGPT. Add <b>ChatGPT (Codex CLI)</b> below and select a model with a reasoning level, such as <code>gpt-6.2-sol:high</code>. Other bridge providers use names such as <code>sonnet:high</code>, <code>hydrogen-low</code>.</div>
     <div class="prov" id="bridgeBox">
-      <h3>Local helper (Claude CLI, Gemini web, Langdock, yt-dlp)</h3>
-      <p class="hint">Run <code>bridge/Start-Bridge.cmd</code> once on Windows, then sign in to the providers you plan to use. Vid2Study reuses existing provider sessions. Langdock opens its own Chrome profile. ChatGPT device sign-in opens the Gemini bridge profile and requires device code sign-in enabled in your ChatGPT account.</p>
+      <h3>Local helper (Claude CLI, Gemini web, yt-dlp)</h3>
+      <p class="hint">Run <code>bridge/Start-Bridge.cmd</code> once on Windows, then sign in to the providers you plan to use. Vid2Study reuses existing provider sessions. ChatGPT device sign-in opens the Gemini bridge profile and requires device code sign-in enabled in your ChatGPT account.</p>
       <div id="bridgeLogins">
         <div class="site" data-session="geminiLogin">
           <span><span class="session-dot" aria-hidden="true"></span>Gemini · <span data-session-status>Checking…</span></span>
@@ -44,16 +44,10 @@
           <span><span class="session-dot" aria-hidden="true"></span>Claude CLI · <span data-session-status>Checking…</span></span>
           <div class="row"><button type="button" data-fix="login-claude" disabled>Sign in</button></div>
         </div>
-        <div class="site" data-session="langdockLogin">
-          <span><span class="session-dot" aria-hidden="true"></span>Langdock · <span data-session-status>Checking…</span></span>
-          <div class="row"><button type="button" data-fix="login-langdock" disabled>Sign in</button></div>
-        </div>
       </div>
       <div class="row"><button type="button" id="bridgeCheck">Check setup</button><button type="button" id="bridgeStart">Start bridge</button><button type="button" id="bridgeStop">Stop bridge</button></div>
       <label for="bridgeToken">Bridge token (filled in automatically)</label>
       <input type="password" id="bridgeToken" autocomplete="off" placeholder="from bridge/token.txt">
-      <label for="ldCookie">Langdock cookie (instead of signing in): DevTools > Network > any request to app.langdock.com > Request Headers > cookie > copy the value. It stays on this computer.</label>
-      <div class="row"><input type="password" id="ldCookie" autocomplete="off" placeholder="paste the cookie value"><button type="button" id="ldCookieSave">Save cookie</button></div>
       <div id="bridgeList"></div>
       <div class="msg" id="bridgeMsg"></div>
       <div class="hint">"Start bridge" starts the helper now and "Stop bridge" stops it; it also starts by itself when a summary needs it. If the button says the helper is not set up, run <code>bridge/Start-Bridge.cmd</code> once (Windows), then reload the extension. yt-dlp needs no setting: YouTube summaries use it by themselves when the page gives no captions or its own download fails, and the bridge refreshes it once a week (<b>Update now</b> forces it).</div>
@@ -82,7 +76,6 @@
     <select id="cheapProv"></select>
     <label for="cheapModelPick">Model</label>
     <select id="cheapModelPick"></select>
-    <input id="cheapModel" type="hidden">
     <div class="hint">Summarises each 10-15 minute chunk of a long lecture into bullet notes. Used only for lectures longer than the short-video limit. A small or local model is fine. If left on "Same as Strong AI" the strong model does these too.</div>
   </section>
 
@@ -99,7 +92,6 @@
     <select id="strongProv"></select>
     <label for="strongModelPick">Model</label>
     <select id="strongModelPick"></select>
-    <input id="strongModel" type="hidden">
     <div class="hint">Writes the final notes: reviews and merges the chunk bullets, fixes mistakes, adds easy examples (as code for programming lectures), the overview and the exam hints. Writes the whole thing itself for short lectures.</div>
   </section>
 
@@ -109,7 +101,6 @@
     <select id="strongFbProv"></select>
     <label for="strongFbModelPick">Model</label>
     <select id="strongFbModelPick"></select>
-    <input id="strongFbModel" type="hidden">
     <div class="hint">The Strong AI is a pool of at most two models: the one above, and this one. If the first fails (rate limit, quota, outage), this one writes instead. Empty = no second model; the job pauses when the first fails.</div>
   </section>
 
@@ -119,7 +110,6 @@
     <select id="visionProv"></select>
     <label for="visionModelPick">Model</label>
     <select id="visionModelPick"></select>
-    <input id="visionModel" type="hidden">
     <label class="check"><input id="useVision" type="checkbox"> Describe diagram / chart / board frames with the Vision AI</label>
     <div class="hint">Never the whole video. Each captured frame is classified on this computer (OCR layout + edge analysis, no AI): frames that look like <b>code, tables, diagrams/charts or equations</b> are sent however much text they hold, plus frames with very little text (boards, drawings). Plain text slides are read by OCR for free. Flagged frames are always placed in the notes and the PDF.</div>
   </section>
@@ -130,7 +120,6 @@
     <select id="digestProv"></select>
     <label for="digestModelPick">Model</label>
     <select id="digestModelPick"></select>
-    <input id="digestModel" type="hidden">
     <div class="hint">Always used (for videos with frames), BEFORE the vision calls. It reads the whole transcript, together with up to 6 frames spread from the start to the end of the video (if the model takes images), and gives three things: (1) a brief summary, sent with all the frames to the screening call; (2) a shortened but detailed timeline with timestamps, sent to the describing calls; (3) the video type (technical, or a story / history / religion video), which decides what a valuable frame is. The Strong AI always gets the full trimmed transcript, never these summaries. Empty = the Cheap AI (pool).</div>
     <label for="screenInPerHour">Frames the code sends to the screening AI (per hour of video, at most)</label>
     <input id="screenInPerHour" type="number" min="20" max="1500" step="20">
@@ -151,7 +140,6 @@
     <select id="sttProv"></select>
     <label for="sttModelPick">Model</label>
     <select id="sttModelPick"></select>
-    <input id="sttModel" type="hidden">
     <div class="hint">Used only when a video has no captions. Default: Whisper runs on this computer (free, private, but slow: hours for a very long video). Choose a provider with a Whisper endpoint (Groq, OpenAI, or any OpenAI-compatible service) and the audio is sent there in 10-minute pieces instead: a 12-hour lecture takes minutes and costs well under a dollar on Groq. <b>This is the only setting that sends audio off this computer.</b> Works for files and for YouTube videos heard from the tab.</div>
   </section>
 
@@ -204,7 +192,6 @@
     <select id="videoProv"></select>
     <label for="videoModelPick">Model</label>
     <select id="videoModelPick"></select>
-    <input id="videoModel" type="hidden">
     <label for="thinkingLevel">Thinking level (Gemini)</label>
     <select id="thinkingLevel"></select>
     <label for="mediaResolution">Video detail sent to Gemini</label>
@@ -222,7 +209,6 @@
     <select id="notesProv"></select>
     <label for="notesModelPick">Model</label>
     <select id="notesModelPick"></select>
-    <input id="notesModel" type="hidden">
     <div class="hint">Writes the notes and the caption-only summaries. Text only, so a cheap model works well.</div>
   </section>
   </div>
@@ -238,16 +224,16 @@
     <label for="writerImages">Pictures sent to the Strong AI with the notes request (0 = none)</label>
     <input id="writerImages" type="number" min="0" max="20" step="1">
     <div class="hint">The most informative frames (diagrams, code, tables, formulas first) go to the writer as images, so it explains what it actually sees. Each picture costs about 1-2 k input tokens on paid APIs; free with Gemini web (10 at most) or the Claude CLI. A model without vision just gets the text descriptions.</div>
-    <label class="check"><input id="researchReferences" type="checkbox"> Keep references separate and research them (books, papers, films, sources, quotes)</label>
-    <div class="hint">Every book, paper, film, person cited as a source or website that is mentioned (said or shown on screen) is noted where it comes up, and listed in its own "References" section with background found by a web search (uses the web search setting below). On-screen quotes always get their own callout.</div>
+    <label class="check"><input id="researchReferences" type="checkbox"> Include a References section for lecture sources and quotes</label>
+    <div class="hint">Every book, paper, film, person cited as a source or website that is mentioned (said or shown on screen) is noted where it comes up, and listed in the References section from the lecture evidence. On-screen quotes always get their own callout.</div>
     <label for="practiceProv">Practice Paper AI</label>
     <select id="practiceProv"></select>
     <label for="practiceModelPick">Practice Paper Model</label>
     <select id="practiceModelPick"></select>
-    <input id="practiceModel" type="hidden">
-    <label class="check"><input id="practiceQuestions" type="checkbox"> Add hard practice questions with worked answers for every topic</label>
-    <div class="hint">IIT / GATE-level problems for theory and maths, LeetCode / interview-level problems for coding, each solved step by step. Written by the Strong AI (one extra call), using web results when web search is on.</div>
-    <label class="check"><input id="webSearch" type="checkbox"> Let the writer search the web (when its model supports it)</label>
+    <label class="check"><input id="practiceQuestions" type="checkbox"> Enable practice paper generation from saved notes</label>
+    <div class="hint">Combined notes offer a practice paper when they’re ready. You can also start one from saved notes and add assignment or sample questions.</div>
+    <label class="check"><input id="webSearch" type="checkbox"> Use web search for notes and practice questions</label>
+    <div class="hint">Notes look up specific gaps. Practice papers use model search where supported or receive search results from Vid2Study.</div>
     <div class="hint">Checks names and facts and adds short background. Gemini (Google Search), Anthropic and OpenRouter models search by themselves. For every other model (Groq, OpenAI, DeepSeek, Ollama, ...) the extension searches DuckDuckGo and Wikipedia itself, with no key, and gives the writer the results. Search may cost extra on some plans.</div>
     <label for="maxFrames">Max figures in the notes and PDF, per hour of lecture (default 10)</label>
     <input id="maxFrames" type="number" min="1" max="60" step="1">
@@ -288,11 +274,6 @@
     <h2>Saved summaries</h2>
     <div class="hint" id="cacheInfo">Calculating...</div>
     <div class="row" style="margin-top:8px"><button id="library" type="button">View saved notes</button><button id="clear" type="button">Clear cache</button><span class="msg" id="clearMsg"></span></div>
-  </section>
-  <section>
-    <h2>Activity log</h2>
-    <div class="hint">Every step, retry, skipped download and error behind the scenes, with timestamps. Red = error, yellow = alert (something skipped, retried, or limited). Stored on this computer only, last 1500 entries.</div>
-    <p><a href="logs.html" target="_blank">Open the activity log</a></p>
   </section>
 </main>
 <script type="module" src="options.js"></script>

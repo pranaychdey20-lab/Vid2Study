@@ -1,35 +1,32 @@
 /** Options page: AI providers (key + URL, automatic model fetch), who does what, output, sites, cache. */
 import { MODELS } from './lib/common.js';
 import { clearAll, countResults } from './lib/db.js';
-import { listModels, detectProvider, generate, gfetch, nativeBridge, signInGemini } from './lib/llm.js';
-import { sttModelsFor, sttModelFor } from './lib/stt.js';
-import { checkModel, checkVision, isSpeechModel, clipText } from './lib/modelcheck.js';
+import { listModels, detectProvider, nativeBridge, signInGemini } from './lib/llm.js';
+import { sttModelsFor } from './lib/stt.js';
+import { checkModel, checkVision } from './lib/modelcheck.js';
 import { needsGeminiSignIn } from './lib/stagefix.js';
-import { loadSettings, saveSettings, KNOWN_SERVICES, PROVIDER_TYPES, PRESETS, BRIDGE_TYPES, BRIDGE_BASE, BRIDGE_MODELS } from './lib/settings.js';
+import { loadSettings, saveSettings, KNOWN_SERVICES, PROVIDER_TYPES, PRESETS, BRIDGE_TYPES, BRIDGE_BASE, providerModelIds as modelIds } from './lib/settings.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 /** @type {object} settings being edited */
 let S;
 const timers = new Map();
+let savedSnapshot;
+let saveChain = Promise.resolve();
 
 /**
- * Providers (keys, URLs, model lists) are saved by themselves a moment after any change, so a
- * pasted key works at once. The Save button is only needed for the other settings.
+ * Debounce typing without delaying committed selections or the Save button.
  */
 function persistSoon() {
   clearTimeout(timers.get('persist'));
-  timers.set('persist', setTimeout(() => {
-    saveSettings({ providers: S.providers.map((p) => ({ ...p, baseUrl: (p.baseUrl || '').replace(/\/+$/, '') })) });
-  }, 500));
+  timers.set('persist', setTimeout(save, 250));
 }
 
 function setMsg(el, text, ok) {
   el.textContent = text;
   el.className = `msg ${ok === true ? 'ok' : ok === false ? 'bad' : ''}`;
 }
-
-const modelIds = (p) => (p?.models?.length ? p.models : p?.type === 'gemini' ? MODELS.map((m) => m.id) : BRIDGE_MODELS[p?.type] || []);
 
 // ---------- providers ----------
 function drawProviders() {
@@ -76,18 +73,29 @@ function fillSelects() {
   for (const s of SLOTS) {
     const list = s.gemini ? S.providers.filter((p) => p.type === 'gemini') : s.openaiOnly ? S.providers.filter((p) => p.type === 'openai') : S.providers;
     const none = s.optional ? `<option value="" ${S[s.k].provider ? '' : 'selected'}>${s.none || 'Same as Strong AI'}</option>` : '';
-    $(s.prov).innerHTML = none + opts(list, S[s.k].provider) || '<option value="">Add a Gemini provider first</option>';
-  }
-  for (const [sel, input] of SLOTS.map((s) => [s.prov, s.model])) {
-    const p = S.providers.find((x) => x.id === $(sel).value);
-    const slot = SLOTS.find((x) => x.model === input);
-    const ids = slot.suggest ? slot.suggest(p) : modelIds(p); // speech models are hidden from provider model lists, so suggest them
-    $(`${input}Pick`).innerHTML = modelOptions(ids, $(input).value.trim());
-    syncPick(input);
+    const provider = $(s.prov);
+    provider.innerHTML = none + opts(list, S[s.k].provider) || '<option value="">Add a Gemini provider first</option>';
+    if (provider.value !== S[s.k].provider) S[s.k] = { provider: provider.value, model: '' };
+    fillSlotModel(s);
   }
   fillLevels();
   fillCheckPicks();
   drawCheapPool();
+}
+
+function fillSlotModel(slot) {
+  const ref = S[slot.k];
+  const provider = S.providers.find(p => p.id === ref.provider);
+  const pick = $(`${slot.model}Pick`);
+  pick.disabled = !provider;
+  pick.innerHTML = modelOptions(slot.suggest ? slot.suggest(provider) : modelIds(provider), provider ? ref.model : '');
+}
+
+function clearProviderModels(id) {
+  for (const slot of SLOTS) {
+    if (S[slot.k].provider === id) S[slot.k] = { provider: id, model: '' };
+  }
+  S.cheapPool = S.cheapPool.map(ref => ref.provider === id ? { provider: id, model: '' } : ref);
 }
 
 /** The Cheap AI fallbacks: one row per extra model (provider + model), tried in order. */
@@ -103,20 +111,22 @@ function drawCheapPool() {
 $('addCheap')?.addEventListener('click', () => {
   (S.cheapPool ||= []).push({ provider: S.cheap.provider || S.providers[0]?.id || '', model: '' });
   drawCheapPool();
+  persistSoon();
   $('cheapPool').querySelector('.row:last-child [data-p="model"]')?.focus();
 });
 $('cheapPool')?.addEventListener('change', e => {
-  const row = S.cheapPool?.[Number(e.target.closest('.row')?.dataset.i)];
+  const i = Number(e.target.closest('.row')?.dataset.i);
+  const row = S.cheapPool?.[i];
   if (!row) return;
   if (e.target.dataset.p === 'provider') {
-    row.provider = e.target.value;
-    row.model = '';
+    S.cheapPool[i] = { provider: e.target.value, model: '' };
   } else if (e.target.dataset.p === 'model') {
-    row.model = pickedModel(e.target, row.model);
+    S.cheapPool[i] = modelChoice(e.target, row);
   }
   drawCheapPool();
+  save();
 });
-$('cheapPool')?.addEventListener('click', (e) => { if (e.target.dataset.a !== 'rmCheap') return; S.cheapPool.splice(Number(e.target.closest('.row').dataset.i), 1); drawCheapPool(); });
+$('cheapPool')?.addEventListener('click', (e) => { if (e.target.dataset.a !== 'rmCheap') return; S.cheapPool.splice(Number(e.target.closest('.row').dataset.i), 1); drawCheapPool(); save(); });
 
 const CUSTOM_MODEL = '__vid2study_enter_custom_model__';
 
@@ -132,24 +142,18 @@ function pickedModel(select, previous = '') {
   return window.prompt('Enter the model ID', previous)?.trim() || previous;
 }
 
-function syncPick(input) {
-  const pick = $(`${input}Pick`);
-  const current = $(input).value.trim();
-  const prior = pick.querySelector('[data-custom-model]');
-  if (prior && prior.value !== current) prior.remove();
-  if (current && ![...pick.options].some(option => option.value === current)) {
-    const custom = new Option(current, current);
-    custom.dataset.customModel = '1';
-    pick.add(custom, pick.options.length - 1);
-  }
-  pick.value = current;
+function modelChoice(select, previous) {
+  const model = pickedModel(select, previous.model).replace(/^models\//, '');
+  const custom = model && (select.value === CUSTOM_MODEL || (previous.custom && previous.model === model));
+  return { provider: previous.provider, model, ...(custom ? { custom: true } : {}) };
 }
-for (const input of SLOTS.map((s) => s.model)) {
-  $(`${input}Pick`).addEventListener('change', e => {
-    $(input).value = pickedModel(e.target, $(input).value);
-    $(input).dispatchEvent(new Event('input'));
+for (const slot of SLOTS) {
+  $(`${slot.model}Pick`).addEventListener('change', e => {
+    S[slot.k] = modelChoice(e.target, S[slot.k]);
+    fillSlotModel(slot);
+    if (slot.k === 'video') fillLevels();
+    save();
   });
-  $(input).addEventListener('input', () => syncPick(input));
 }
 
 /** The Vision AI slot: its own check button, and an automatic check whenever its provider or model changes. */
@@ -161,12 +165,11 @@ for (const input of SLOTS.map((s) => s.model)) {
   const msg = document.createElement('div');
   msg.className = 'msg';
   msg.id = 'visionMsg';
-  $('visionModel').after(row, msg);
+  $('visionModelPick').after(row, msg);
   let timer = 0, seq = 0;
   const run = async () => {
-    const own = $('visionProv').value;
-    const p = S.providers.find((x) => x.id === (own || $('strongProv').value));
-    const model = own ? $('visionModel').value.trim() : $('strongModel').value.trim(); // empty slot = Strong AI does vision
+    const { provider, model } = S.vision.provider ? S.vision : S.strong;
+    const p = S.providers.find(x => x.id === provider);
     if (!p || !model) { setMsg(msg, ''); return; }
     const mine = ++seq;
     setMsg(msg, `Checking that ${model} can see images...`);
@@ -174,20 +177,19 @@ for (const input of SLOTS.map((s) => s.model)) {
   };
   $('visionCheck').addEventListener('click', run);
   const soon = () => { clearTimeout(timer); timer = setTimeout(run, 1200); };
-  $('visionModel').addEventListener('change', soon);
   $('visionModelPick').addEventListener('change', soon);
   $('visionProv').addEventListener('change', soon);
 }
 
 /** The model to check first for a provider: one a slot already uses with it, else its first model. */
 function defaultCheckModel(p) {
-  const used = SLOTS.find((s) => $(s.prov)?.value === p.id && $(s.model)?.value.trim());
-  return used ? $(used.model).value.trim() : modelIds(p)[0] || '';
+  const used = SLOTS.map(slot => S[slot.k]).find(ref => ref.provider === p.id && ref.model);
+  return used?.model || modelIds(p)[0] || '';
 }
 
 /** Thinking levels the chosen video model allows (Gemini only). */
 function fillLevels() {
-  const m = MODELS.find((x) => x.id === $('videoModel').value.trim());
+  const m = MODELS.find(x => x.id === S.video.model);
   const sel = $('thinkingLevel');
   const want = S.thinkingLevel;
   sel.innerHTML = m ? m.levels.map((l) => `<option value="${l}">${l}</option>`).join('') : '<option value="">Model default</option>';
@@ -196,19 +198,27 @@ function fillLevels() {
 }
 
 /** Ask the provider for its models (also proves the key works). Runs shortly after the user stops typing. */
+function sameProviderConfig(provider, requested) {
+  return S.providers.includes(provider) && provider.type === requested.type &&
+    provider.baseUrl === requested.baseUrl && provider.apiKey === requested.apiKey;
+}
+
 async function fetchModels(id, { quiet = false } = {}) {
   const p = S.providers.find((x) => x.id === id);
-  const box = document.querySelector(`.prov[data-id="${CSS.escape(id)}"] [data-r="status"]`);
-  if (!p || !box) return;
-  if (!p.baseUrl || (!p.apiKey && !/localhost|127\.0\.0\.1/.test(p.baseUrl))) { if (!quiet) setMsg(box, 'Enter the URL and the API key first.', false); return; }
-  setMsg(box, 'Fetching models...');
+  const status = () => document.querySelector(`.prov[data-id="${CSS.escape(id)}"] [data-r="status"]`);
+  if (!p || !status()) return;
+  if (!p.baseUrl || (!p.apiKey && !/localhost|127\.0\.0\.1/.test(p.baseUrl))) { if (!quiet) setMsg(status(), 'Enter the URL and the API key first.', false); return; }
+  const requested = { ...p };
+  setMsg(status(), 'Fetching models...');
   try {
-    p.models = await listModels(p);
-    setMsg(box, `Key works. ${p.models.length} models found. Saved.`, true);
+    const models = await listModels(requested);
+    if (!sameProviderConfig(p, requested)) return;
+    p.models = models;
+    setMsg(status(), `Key works. ${p.models.length} models found. Saved.`, true);
     fillSelects();
     persistSoon();
   } catch (e) {
-    setMsg(box, `Could not fetch models: ${e.message}`, false);
+    if (sameProviderConfig(p, requested)) setMsg(status(), `Could not fetch models: ${e.message}`, false);
   }
 }
 const isStockUrl = (u) => !u || [...PRESETS, ...KNOWN_SERVICES].some((x) => x.base === u);
@@ -224,13 +234,16 @@ async function autoDetect(id) {
   if (!p?.apiKey) return;
   if (!isStockUrl(p.baseUrl)) return fetchModels(id, { quiet: true });
   if (status()) setMsg(status(), 'Detecting the service...');
-  const hit = await detectProvider(p.apiKey);
+  const requested = { ...p };
+  const hit = await detectProvider(requested.apiKey);
+  if (!sameProviderConfig(p, requested)) return;
   if (!hit) {
     if (p.baseUrl) return fetchModels(id, { quiet: true });
     if (status()) setMsg(status(), 'Could not tell which service this key belongs to. Enter the Base URL.', false);
     return;
   }
   if (isStockName(p.name)) p.name = hit.name;
+  if (p.type !== hit.type || (p.baseUrl && p.baseUrl !== hit.baseUrl)) clearProviderModels(id);
   Object.assign(p, { type: hit.type, baseUrl: hit.baseUrl, models: hit.models });
   drawProviders();
   persistSoon();
@@ -244,11 +257,14 @@ $('providers').addEventListener('input', (e) => {
   const f = e.target.dataset.f;
   if (!box || !f) return;
   const p = S.providers.find((x) => x.id === box.dataset.id);
-  p[f] = e.target.value.trim();
+  const value = e.target.value.trim();
+  if (!p || p[f] === value) return;
+  p[f] = value;
   persistSoon();
   if (f === 'type') { // a new type brings its own default URL
     p.baseUrl = PROVIDER_TYPES[p.type].base;
     p.models = [];
+    clearProviderModels(p.id);
     drawProviders();
     return;
   }
@@ -308,10 +324,10 @@ $('providers').addEventListener('click', async (e) => {
   else if (a === 'remove' && S.providers.length > 1) {
     S.providers = S.providers.filter((p) => p.id !== id);
     persistSoon();
-    if (S.video.provider === id) S.video.provider = S.providers.find((p) => p.type === 'gemini')?.id || '';
-    if (S.notes.provider === id) S.notes.provider = S.providers[0].id;
-    if (S.strong.provider === id) S.strong = { provider: S.providers[0].id, model: '' };
-    for (const k of ['cheap', 'vision', 'stt', 'digest', 'strongFallback', 'practice']) if (S[k]?.provider === id) S[k] = { provider: '', model: '' };
+    for (const slot of SLOTS.filter(slot => S[slot.k]?.provider === id)) {
+      const provider = slot.optional ? '' : slot.gemini ? S.providers.find(p => p.type === 'gemini')?.id || '' : S.providers[0].id;
+      S[slot.k] = { provider, model: '' };
+    }
     S.cheapPool = (S.cheapPool || []).filter((r) => r.provider !== id);
     drawProviders();
   }
@@ -320,18 +336,21 @@ $('addProv').addEventListener('click', () => {
   const pr = PRESETS[Number($('preset').value)];
   S.providers.push({ id: `p_${Math.random().toString(36).slice(2, 8)}`, name: pr.auto ? 'New provider' : pr.name, type: pr.type, baseUrl: pr.base, apiKey: '', models: [] });
   drawProviders();
+  persistSoon();
   if (BRIDGE_TYPES.includes(pr.type)) autoToken(); else document.querySelector('.prov:last-child [data-f="apiKey"]')?.focus();
 });
 for (const s of SLOTS) {
   $(s.prov).addEventListener('change', () => {
-    S[s.k].provider = $(s.prov).value;
-    if (!S[s.k].provider) $(s.model).value = ''; // "Same as Strong AI"
-    // speech model names differ per service (whisper-1 is OpenAI only): switch to one the new service has
-    if (s.k === 'stt' && S.stt.provider) $(s.model).value = sttModelFor(S.providers.find((x) => x.id === S.stt.provider), $(s.model).value.trim());
-    fillSelects();
+    const provider = $(s.prov).value;
+    if (provider === S[s.k].provider) return;
+    const model = s.k === 'stt' && provider ? sttModelsFor(S.providers.find(p => p.id === provider))[0] : '';
+    S[s.k] = { provider, model };
+    fillSlotModel(s);
+    if (s.k === 'video') fillLevels();
+    save();
   });
 }
-$('videoModel').addEventListener('input', fillLevels);
+$('thinkingLevel').addEventListener('change', e => { S.thinkingLevel = e.target.value; });
 const showEngine = () => {
   const legacy = $('engine').value === 'gemini';
   $('legacy').hidden = !legacy;
@@ -415,17 +434,6 @@ async function bridgeCheck() {
   } catch (e) { setMsg(msg, e.message, false); }
 }
 $('bridgeCheck').addEventListener('click', bridgeCheck);
-$('ldCookieSave').addEventListener('click', async () => {
-  const cookie = $('ldCookie').value.trim();
-  if (!cookie) return setMsg($('bridgeMsg'), 'Paste the cookie value first.', false);
-  setMsg($('bridgeMsg'), 'Saving and testing the cookie...');
-  try {
-    const res = await fetch(`${bridgeUrl()}/setup/langdock-cookie`, { method: 'POST', headers: { 'x-bridge-token': bridgeTok(), 'Content-Type': 'application/json' }, body: JSON.stringify({ cookie }) });
-    const r = await res.json();
-    setMsg($('bridgeMsg'), r.detail || r.error?.message || 'Done', !!r.ok);
-    if (r.ok) { $('ldCookie').value = ''; await bridgeCheck(); }
-  } catch (e) { setMsg($('bridgeMsg'), `Could not reach the bridge: ${e.message}. Press Start bridge first.`, false); }
-});
 $('bridgeStop').addEventListener('click', async () => {
   try { await bridgeCall('/shutdown', 'POST'); sessionVersion++; paintSessions(null, 'Bridge stopped'); setMsg($('bridgeMsg'), 'Bridge stopped. It starts again by itself when a summary needs it, or press Start bridge.', true); $('bridgeList').innerHTML = ''; } catch (e) { setMsg($('bridgeMsg'), /fetch/i.test(e.message) ? 'The bridge is not running.' : e.message, false); }
 });
@@ -466,13 +474,14 @@ function drawSites() {
   $('sites').innerHTML = S.sites.map((h) => `<div class="site"><span>${esc(h)}</span><button type="button" data-h="${esc(h)}">Remove</button></div>`).join('') || '<div class="hint">No sites enabled.</div>';
 }
 $('sites').addEventListener('click', (e) => {
-  if (e.target.dataset.h) { S.sites = S.sites.filter((h) => h !== e.target.dataset.h); drawSites(); }
+  if (e.target.dataset.h) { S.sites = S.sites.filter((h) => h !== e.target.dataset.h); drawSites(); save(); }
 });
 $('addSite').addEventListener('click', () => {
   const h = $('newSite').value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase();
   if (h && !S.sites.includes(h)) S.sites.push(h);
   $('newSite').value = '';
   drawSites();
+  save();
 });
 
 // ---------- load / save ----------
@@ -481,8 +490,6 @@ async function load() {
   S.sites = [...S.sites];
   $('preset').innerHTML = PRESETS.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('');
   drawProviders();
-  for (const s of SLOTS) { $(s.model).value = S[s.k].model || ''; syncPick(s.model); }
-  fillLevels();
   $('engine').value = S.engine;
   showEngine();
   $('downloadFirst').checked = S.downloadFirst !== false;
@@ -500,6 +507,7 @@ async function load() {
   $('deleteAfter').checked = S.deleteAfter;
   $('enabled').checked = S.enabled;
   drawSites();
+  savedSnapshot = readForm();
   await showCache();
   await showFileHint();
   await autoToken();
@@ -523,23 +531,15 @@ $('openExt').addEventListener('click', () => {
   chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
 });
 
-async function save() {
+function readForm() {
   const clamp = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || d));
-  const ref = (s) => {
-    const provider = $(s.prov).value;
-    return { provider, model: provider ? $(s.model).value.trim().replace(/^models\//, '') : '' };
-  };
-  const [cheap, strong, vision, stt, video, notes, digest, strongFallback, practice] = SLOTS.map(ref);
-  const cheapPool = (S.cheapPool || []).filter((r) => r.provider && String(r.model || '').trim()).map((r) => ({ provider: r.provider, model: String(r.model).trim().replace(/^models\//, '') }));
+  const modelSettings = Object.fromEntries(SLOTS.map(slot => [slot.k, { ...S[slot.k] }]));
+  const cheapPool = S.cheapPool.filter(row => row.model).map(row => ({ ...row }));
   const engine = $('engine').value;
-  if (engine === 'local' && !strong.model) return setMsg($('saveMsg'), 'Enter a model for the Strong AI.', false);
-  if (engine === 'local' && $('practiceQuestions').checked && practice.provider && !practice.model) return setMsg($('saveMsg'), 'Select a Practice Paper Model.', false);
-  if (engine === 'local' && ((cheap.provider && !cheap.model) || (vision.provider && !vision.model) || (stt.provider && !stt.model))) return setMsg($('saveMsg'), 'Enter a model for the Cheap / Vision / Speech-to-text AI, or leave its provider on the default.', false);
-  if (engine === 'gemini' && (!video.model || !notes.model)) return setMsg($('saveMsg'), 'Enter a model for the video AI and the notes AI.', false);
   const num = (id, lo, hi, d) => Math.min(hi, Math.max(lo, Number($(id).value) || d));
-  await saveSettings({
-    providers: S.providers.map((p) => ({ ...p, baseUrl: p.baseUrl.replace(/\/+$/, '') })),
-    engine, cheap, strong, vision, stt, video, notes, digest, strongFallback, practice, cheapPool,
+  return {
+    providers: S.providers.map((p) => ({ ...p, baseUrl: (p.baseUrl || '').replace(/\/+$/, '') })),
+    engine, ...modelSettings, cheapPool,
     useVision: $('useVision').checked,
     downloadFirst: $('downloadFirst').checked,
     downloadMaxHours: num('downloadMaxHours', 0, 48, 3),
@@ -572,11 +572,27 @@ async function save() {
     maxWidth: clamp($('maxWidth').value, 480, 3840, 1600),
     deleteAfter: $('deleteAfter').checked,
     enabled: $('enabled').checked,
-    sites: S.sites.length ? S.sites : []
-  });
-  setMsg($('saveMsg'), 'Saved', true);
-  setTimeout(() => { if ($('saveMsg').className.includes('ok')) setMsg($('saveMsg'), ''); }, 2000);
+    sites: [...S.sites]
+  };
 }
+
+function save(manual = false) {
+  if (!savedSnapshot) return;
+  clearTimeout(timers.get('persist'));
+  const next = readForm();
+  saveChain = saveChain.then(async () => {
+    const patch = Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(savedSnapshot[key])));
+    if (Object.keys(patch).length) await saveSettings(patch);
+    savedSnapshot = next;
+    setMsg($('saveMsg'), manual ? 'Saved' : 'Saved automatically', true);
+  }).catch(error => setMsg($('saveMsg'), `Could not save settings: ${error.message}`, false));
+  return saveChain;
+}
+
+const settingsControl = target => target.matches('input[id], select[id]') && !target.closest('#bridgeBox') && !['preset', 'newSite'].includes(target.id);
+document.addEventListener('input', event => { if (savedSnapshot && settingsControl(event.target)) persistSoon(); });
+document.addEventListener('change', event => { if (settingsControl(event.target)) save(); });
+addEventListener('pagehide', () => { if (timers.get('persist')) save(); });
 
 async function showCache() {
   const count = await countResults().catch(() => 0);
@@ -586,7 +602,7 @@ async function showCache() {
 }
 
 $('library').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('library.html') }));
-$('save').addEventListener('click', save);
+$('save').addEventListener('click', () => save(true));
 $('clear').addEventListener('click', async () => {
   if (!confirm('Delete all saved summaries and images?')) return;
   await clearAll();

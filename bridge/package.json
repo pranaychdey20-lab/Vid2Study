@@ -6,8 +6,7 @@
   "description": "Local helper for the extension: Claude CLI (subscription) and Gemini web (headless). Not part of the extension itself.",
   "scripts": {
     "start": "node server.mjs",
-    "login": "node login.mjs",
-    "login-langdock": "node login-langdock.mjs"
+    "login": "node login.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.49.0"

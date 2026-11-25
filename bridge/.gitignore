@@ -1,12 +1,11 @@
 profile/
-profile-langdock/
+profile-*/
 errors/
 token.txt
 bridge.log
 node_modules/
 bin/
 tmp/
-langdock-session.json
-gemini-session.json
+*-session.json
 com.lecturehelper.bridge.json
 native-host.cmd

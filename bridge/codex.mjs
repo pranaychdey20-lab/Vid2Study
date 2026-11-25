@@ -116,7 +116,7 @@ function runExec(bin, args, cwd, input, signal) {
   });
 }
 
-export async function runCodex({ model, effort, prompt, system, images = [], signal }) {
+export async function runCodex({ model, effort, prompt, system, images = [], signal, search = false }) {
   const bin = findCodex();
   if (!bin) throw failure(INSTALL_REQUIRED, 503);
   if (model && (typeof model !== 'string' || !/^[\w.:-]+$/.test(model) || model.startsWith('-'))) {
@@ -136,7 +136,7 @@ export async function runCodex({ model, effort, prompt, system, images = [], sig
     const instructions = join(cwd, 'instructions.txt');
     await writeFile(instructions, 'Answer the request directly using the supplied text and images.');
     const args = ['exec', '--json', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--sandbox', 'read-only',
-      '-c', 'approval_policy="never"', '-c', AUTH_CONFIG, '-c', 'forced_login_method="chatgpt"', '-c', 'web_search="disabled"',
+      '-c', 'approval_policy="never"', '-c', AUTH_CONFIG, '-c', 'forced_login_method="chatgpt"', '-c', search ? 'web_search="live"' : 'web_search="disabled"',
       '-c', `model_instructions_file=${JSON.stringify(instructions)}`,
       '-c', 'project_doc_max_bytes=0',
       '--enable', 'skip_host_skill_discovery', '--enable', 'omit_skill_descriptions',

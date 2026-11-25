@@ -4,11 +4,12 @@
  * (MV3 can stop it at any time), so the queue lives in chrome.storage.session and the
  * "already downloaded" map (url -> file on disk) in chrome.storage.local.
  */
-import { cleanUrl, CONTENT_FILES } from './lib/common.js';
-import { loadSettings, settingsProblem, DEFAULT_SITES } from './lib/settings.js';
-import { getResult, hasResult } from './lib/db.js';
-import { log, tapConsole, useLocalStore, appendLog } from './lib/log.js';
+import { cleanUrl, CONTENT_FILES, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
+import { loadSettings, settingsProblem, DEFAULT_SITES, isBridge } from './lib/settings.js';
+import { getResult, hasResult, deleteLectureArtifacts, clearProcessingArtifacts } from './lib/db.js';
+import { log, tapConsole, useLocalStore, appendLog, deleteLectureLogs, clearActivityLog, clip } from './lib/log.js';
 import { pagePlayerCaptions, json3ToLines } from './lib/ytcaptions.js';
+import { planCombined } from './lib/combined.js';
 
 tapConsole('service-worker');
 useLocalStore();
@@ -131,6 +132,7 @@ async function sendToOffscreen(msg) {
 // item: { id, url, kind: 'download'|'summary', title, course, filename, regenerate, tabId,
 //         status: 'queued'|'running'|'done'|'error'|'cancelled', message, startedAt }
 let chain = Promise.resolve();
+const liveJobs = new Map();
 
 /** Read-modify-write the queue under a lock so concurrent messages cannot lose updates. */
 function mutate(fn) {
@@ -191,6 +193,7 @@ async function finish(where, status, message = '') {
     return { ...it };
   });
   if (item) {
+    liveJobs.delete(item.id);
     const secs = item.startedAt ? Math.round((Date.now() - item.startedAt) / 1000) : null;
     const what = `${item.kind === 'download' ? 'Download' : 'Summary'} "${item.title || item.url}"`;
     const jl = jobLog(item);
@@ -202,7 +205,7 @@ async function finish(where, status, message = '') {
   }
   if (item?.kind === 'summary') {
     chrome.tabs.sendMessage(item.tabId, status === 'done'
-      ? { type: 'SUMMARY_DONE', url: item.url, cacheKey: item.url, title: item.title }
+      ? { type: 'SUMMARY_DONE', url: item.url, cacheKey: item.url, title: item.title, combined: !!item.batch }
       : { type: 'SUMMARY_ERROR', url: item.url, message }).catch(() => {});
   } else if (item) {
     chrome.tabs.sendMessage(item.tabId, { type: 'DOWNLOAD_STATUS', url: item.url, state: status === 'done' ? 'done' : 'error', message }).catch(() => {});
@@ -234,8 +237,11 @@ async function openFixWindow(item) {
     const w = await chrome.windows.get(old).catch(() => null);
     if (w) { await chrome.windows.update(old, { focused: true, drawAttention: true }).catch(() => {}); return; }
   }
-  const w = await chrome.windows.create({ url: chrome.runtime.getURL(`${FIX_PAGE}?id=${encodeURIComponent(item.id)}`), type: 'popup', width: 580, height: 760, focused: true }).catch(() => null);
-  if (w?.id != null) { fixWindows[item.id] = w.id; await chrome.storage.session.set({ fixWindows }); }
+  const url = chrome.runtime.getURL(`${FIX_PAGE}?id=${encodeURIComponent(item.id)}`);
+  const w = await chrome.windows.create({ url, type: 'popup', width: 580, height: 760, focused: true }).catch(() => null);
+  if (w?.id == null) { await chrome.tabs.create({ url, active: true }); return; }
+  fixWindows[item.id] = w.id;
+  await chrome.storage.session.set({ fixWindows });
 }
 chrome.windows.onRemoved.addListener(async (windowId) => {
   const { fixWindows = {} } = await chrome.storage.session.get('fixWindows');
@@ -262,7 +268,7 @@ async function pauseItem(url, info) {
   closeHelper(item.tabId).catch(() => {}); // the YouTube helper window is not needed while we wait
   chrome.tabs.sendMessage(item.tabId, { type: 'SUMMARY_PAUSED', url: item.url, id: item.id, title: item.title, info }).catch(() => {});
   await syncBadge();
-  await openFixWindow(item);
+  await openFixWindow(item).catch(e => jobLog(item).alert('queue', 'Could not open the model picker. Open it from the paused lecture.', { reason: e.message }));
   await pump(); // other queued items are not held up by a paused one
   const q = await getQueue();
   if (!q.items.some(isActive)) closeOffscreen();
@@ -333,9 +339,9 @@ async function setJobReferer(url, referer, origin) {
 /** Send one item to the worker page. */
 async function start(item) {
   try {
-    jobLog(item).info('queue', `Starting ${item.kind === 'download' ? 'download' : 'summary'}`);
+    jobLog(item).info('queue', `Starting ${item.kind === 'download' ? 'download' : 'summary'}`, { status: 'running' });
     await ensureOffscreen();
-    const from = item.videoUrl || item.url;
+    const from = item.batch?.[0]?.videos[0]?.url || item.videoUrl || item.url;
     if (item.kind === 'download') {
       // chrome.downloads cannot add the Referer the host requires, so fetch the file in the
       // worker page first and save the resulting blob (see DOWNLOAD_READY below).
@@ -345,12 +351,13 @@ async function start(item) {
     } else {
       const mode = item.mode || 'video';
       const settings = await loadSettings();
+      if (item.batch && settings.engine === 'gemini') throw new Error('Combined notes use the local transcript and slide engine. Select it in Options.');
       const problem = settingsProblem(settings, mode);
       if (problem) throw new Error(problem);
       let local = null, skipReason;
       if (mode === 'video') {
         await setJobReferer(from, item.referer);
-        ({ local, skipReason } = await findLocal(item.url));
+        if (!item.batch) ({ local, skipReason } = await findLocal(item.url));
       }
       // Download-first streams (YouTube) come from googlevideo.com hosts (the exact host varies per request)
       // and need YouTube's Referer and Origin; one domain-wide rule covers audio and video.
@@ -358,12 +365,15 @@ async function start(item) {
       const txKey = `tx_${item.url}`;
       // captions travel with every mode: 'text' needs them, the others use them instead of speech recognition when present
       const transcript = (await chrome.storage.session.get(txKey))[txKey];
+      const batchSources = item.batch ? Object.fromEntries(await Promise.all(item.batch.flatMap(group => group.videos)
+        .map(async video => [video.url, await findLocal(video.url).catch(() => ({ local: null }))]))) : undefined;
       const res = await sendToOffscreen({
         type: 'RUN_JOB',
         job: {
           resume: !!item.resume, skipStages: item.skip || [],
           jobId: item.id, mode, tabId: item.tabId, url: item.url, videoUrl: from, youtubeId: item.youtubeId, transcript, title: item.title, course: item.course,
           regenerate: !!item.regenerate, settings, local, skipReason, withCookies: !!item.withCookies,
+          batch: item.batch, batchSources,
           durationSec: item.durationSec || 0
         }
       });
@@ -397,7 +407,6 @@ async function recoverStale() {
   const q = await getQueue();
   const stale = q.items.filter((i) => i.status === 'running' && Date.now() - (i.startedAt || 0) > 20000);
   if (stale.length) {
-    for (const i of stale) jobLog(i).alert('queue', 'Left running (browser restart or crash), checking it');
     const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
     const res = contexts.length ? await sendToOffscreen({ type: 'STATUS' }).catch(() => null) : null;
     if (!res || res.idle) for (const i of stale) await finish({ id: i.id }, 'error', 'Interrupted. Try again.');
@@ -540,7 +549,7 @@ async function relayCapture(msg) {
  */
 async function bridgeInfo(start) {
   const s = await loadSettings();
-  const p = (s.providers || []).find((x) => ['claudecli', 'geminiweb'].includes(x.type) && x.apiKey);
+  const p = (s.providers || []).find(x => isBridge(x) && x.apiKey);
   if (p) return { ok: true, url: (p.baseUrl || 'http://127.0.0.1:8787').replace(/\/+$/, ''), token: p.apiKey };
   try {
     let r = await chrome.runtime.sendNativeMessage('com.lecturehelper.bridge', { cmd: start ? 'start' : 'token' });
@@ -552,6 +561,38 @@ async function bridgeInfo(start) {
 async function handle(msg, sender) {
   const tabId = sender.tab?.id;
   switch (msg.type) {
+    case 'CLEAR_PROCESSING_FILES': {
+      if (sender.url !== chrome.runtime.getURL('library.html')) return { error: 'Open Saved notes to manage processing files.' };
+      const busy = { error: 'Finish or cancel active and paused jobs before clearing processing files.' };
+      return mutate(({ items }) => {
+        if (items.some(item => isActive(item) || item.status === 'paused')) return busy;
+        return navigator.locks.request(PROCESSING_LOCK, { ifAvailable: true }, async lock => {
+          if (!lock) return busy;
+          await clearProcessingArtifacts(msg.includeFigures === true);
+          const transcriptKeys = Object.keys(await chrome.storage.session.get(null)).filter(key => key.startsWith('tx_'));
+          if (transcriptKeys.length) await chrome.storage.session.remove(transcriptKeys);
+          await clearActivityLog();
+          return { ok: true };
+        });
+      });
+    }
+    case 'DELETE_LECTURE_ARTIFACTS': {
+      if (sender.url !== chrome.runtime.getURL('library.html')) return { error: 'Open Saved notes to manage lecture files.' };
+      const { key, kind } = msg;
+      if (typeof key !== 'string' || !key || !['transcript', 'logs', 'frames'].includes(kind)) return { error: 'Invalid lecture cleanup request.' };
+      const busy = { error: 'Finish or cancel this lecture’s queued or paused job before deleting its files.' };
+      return mutate(({ items }) => {
+        const jobs = items.filter(item => item.url === key);
+        if (jobs.some(item => isActive(item) || item.status === 'paused')) return busy;
+        return navigator.locks.request(lectureLockName(key), { ifAvailable: true }, async lock => {
+          if (!lock) return busy;
+          await deleteLectureArtifacts(key, kind);
+          if (kind === 'transcript') await chrome.storage.session.remove(`tx_${key}`);
+          if (kind === 'logs') await deleteLectureLogs(key, jobs.map(item => item.id));
+          return { ok: true };
+        });
+      });
+    }
     // ---- log entries from other pages (offscreen, options, content script) ----
     case 'LOG': {
       const e = msg.entry;
@@ -561,6 +602,14 @@ async function handle(msg, sender) {
           if (run) Object.assign(e, { job: run.id, jobTitle: String(run.title || run.url).slice(0, 120), jobKind: run.kind === 'download' ? 'download' : run.mode === 'youtube' ? 'youtube summary' : 'summary' });
         }
         appendLog(e);
+        if (e.job) {
+          const item = (await getQueue()).items.find(i => i.id === e.job && i.status === 'running');
+          if (item?.tabId != null) {
+            const update = { type: 'LIVE_JOB_LOG', url: item.url, text: clip(e.msg, 600) };
+            liveJobs.set(item.id, { ...liveJobs.get(item.id), log: update });
+            chrome.tabs.sendMessage(item.tabId, update).catch(() => {});
+          }
+        }
       }
       return { ok: true };
     }
@@ -592,9 +641,37 @@ async function handle(msg, sender) {
       if (msg.items.some((i) => i.kind === 'summary')) { const problem = await problemFor('video'); if (problem) return { error: problem }; }
       await enqueue(msg.items, tabId);
       return { ok: true };
-    case 'GET_STATES':
+    case 'COMBINE_LECTURES': {
+      if (tabId == null || !Array.isArray(msg.lectures) || msg.lectures.length < 2) return { error: 'Select at least two lectures.' };
+      const urls = new Set();
+      for (const lecture of msg.lectures) {
+        if (!lecture || typeof lecture.url !== 'string' || !/^https:\/\/media-content-iitglms\.b-cdn\.net\//i.test(lecture.url)) {
+          return { error: 'Select video files from the IITG lecture list.' };
+        }
+        urls.add(lecture.url);
+      }
+      if (urls.size !== msg.lectures.length) return { error: 'The selection includes duplicate videos.' };
+      const batch = planCombined(msg.lectures);
+      if (msg.preview) return { batches: batch.map(group => ({ chapter: group.chapter, duration: group.duration, titles: group.videos.map(video => video.title) })) };
+      const settings = await loadSettings();
+      if (settings.engine === 'gemini') return { error: 'Combined notes use the local transcript and slide engine. Select it in Options.' };
+      const problem = settingsProblem(settings, 'video');
+      if (problem) return { error: problem };
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(batch.map(group => [group.chapterKey, group.videos.map(video => video.url)]))));
+      const url = `combined:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+      const course = String(msg.course || '').trim();
+      const title = course ? `${course} — Combined notes` : 'Combined lecture notes';
+      if (await hasResult(url)) return { ok: true, url, title, ready: true };
+      await enqueue([{ url, title, course, courseId: String(msg.courseId || ''), batch, kind: 'summary', mode: 'video', referer: 'https://elearn.iitg.ac.in/' }], tabId);
+      return { ok: true, url, title };
+    }
+    case 'GET_STATES': {
       await recoverStale();
-      return { states: await getStates(msg.urls) };
+      const items = (await getQueue()).items.filter(item => item.tabId === tabId);
+      return { states: await getStates(msg.urls), combined: items.findLast(item => item.batch
+        && item.courseId === String(msg.courseId || '')) || null,
+        liveJobs: items.filter(item => item.status === 'running').flatMap(item => liveJobs.get(item.id) || []) };
+    }
     case 'CANCEL':
       await cancelQueue();
       return { ok: true };
@@ -636,6 +713,7 @@ async function handle(msg, sender) {
 
     // ---- from offscreen document ----
     case 'PROGRESS':
+      if (msg.jobId) liveJobs.set(msg.jobId, { ...liveJobs.get(msg.jobId), progress: msg });
       chrome.tabs.sendMessage(msg.tabId, msg).catch(() => {});
       return { ok: true };
     case 'DOWNLOAD_READY': {

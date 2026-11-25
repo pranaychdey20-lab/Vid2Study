@@ -14,6 +14,9 @@ import { resolveYoutubeStreams } from './lib/ytstreams.js';
 import { getBridge, bridgeSubs, bridgeMedia } from './lib/ytbridge.js';
 import { getDraft } from './lib/db.js';
 import { log, tapConsole, setJob } from './lib/log.js';
+import { lectureLockName } from './lib/common.js';
+import { runCombined } from './lib/combined.js';
+import { closeOcr } from './lib/ocr.js';
 
 tapConsole('offscreen');
 
@@ -73,137 +76,148 @@ async function runJob(job) {
   current = { controller, url: job.url };
   samples = null;
   let lastStage = '';
-  const progress = (stage, percent, text) => {
+  const progress = (stage, percent, text, detail) => {
     if (stage !== lastStage) { // one log line per stage change, not per progress tick
       lastStage = stage;
       log.info('stage', `${stage}${text ? `: ${text}` : ''}`);
     }
-    return chrome.runtime.sendMessage({ type: 'PROGRESS', tabId: job.tabId, url: job.url, stage, percent, text }).catch(() => {});
+    return chrome.runtime.sendMessage({ type: 'PROGRESS', tabId: job.tabId, jobId: job.jobId, url: job.url, stage, percent, text, ...detail }).catch(() => {});
   };
   let done;
   const started = Date.now();
   // everything this page logs until the job ends belongs to it (grouped on the Activity log page)
   setJob({ id: job.jobId, title: job.title || job.url, kind: job.mode === 'youtube' ? 'youtube summary' : 'summary' });
   log.info('job', `Started ${job.mode} job: ${job.title || job.url}`, { hours: job.durationSec ? +(job.durationSec / 3600).toFixed(2) : undefined, regenerate: !!job.regenerate, engine: job.settings?.engine, asr: job.settings?.asrModel, provider: job.settings?.strong?.provider });
+  const videoSource = async (url, local, skipReason, sourceSignal = signal, report = progress) => (await resolveSource({
+    url, local, skipReason, signal: sourceSignal, progress: report,
+    headSize: value => headSize(value, job.withCookies, sourceSignal),
+    readFile: async fileUrl => {
+      const res = await fetch(fileUrl, { signal: sourceSignal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.blob();
+    },
+    fetchRemote: () => fetchVideo(url, sourceSignal, report, job.settings.engine === 'gemini', job.withCookies)
+  })).blob;
   try {
-    // Download-first (YouTube): audio + video streams fetched in parallel, then parsed at CPU speed.
-    // Falls back to the normal page-player path when the streams cannot be downloaded.
-    let streams = null;
-    // very long videos (e.g. a 12 h stream) are heard + scanned through the page player instead: memory stays small
-    const maxH = Number(job.settings?.downloadMaxHours) || 0;
-    const tooLong = maxH > 0 && job.durationSec > maxH * 3600;
-    // a job resumed after a model failure already has its transcript and slide scan in the saved draft: no need to fetch the video again
-    const saved = job.resume && !job.regenerate ? await getDraft(job.url).catch(() => null) : null;
-    const mediaDone = !!(saved?.segments && saved?.scan);
-    if (mediaDone) log.info('job', 'Resuming: the transcript and slide scan are already saved, the video is not fetched again');
-    const ytLocal = !mediaDone && job.mode === 'youtube' && job.settings?.engine !== 'gemini' && !!job.youtubeId;
-    const ytDownload = ytLocal && job.settings?.downloadFirst !== false;
-    // Captions the page's player could not give: ask yt-dlp in the local bridge (seconds, no listening).
-    // Order for a YouTube transcript: page player captions (content.js) -> yt-dlp captions -> downloaded audio
-    // (the extension's own download, else yt-dlp's) -> listening to the page player (last resort).
-    let transcript = job.transcript;
-    let bridge = null;
-    const bridgeOnce = async () => {
-      if (!bridge) {
-        bridge = await getBridge();
-        if (bridge.error) log.info('download', `yt-dlp (local bridge) not available: ${bridge.error}`);
+    let title;
+    if (job.batch) {
+      const { formatReferences } = await import('./lib/local-pipeline.js');
+      const lowMemory = navigator.deviceMemory > 0 && navigator.deviceMemory <= 4;
+      try {
+        ({ title } = await navigator.locks.request(lectureLockName(job.url), { signal }, () => runCombined(job, {
+          signal, progress, formatReferences, run: runPipeline,
+          parallelism: lowMemory || navigator.hardwareConcurrency < 4 ? 1 : 2,
+          getSource: (video, sourceSignal, report) => videoSource(video.url, job.batchSources?.[video.url]?.local,
+            job.batchSources?.[video.url]?.skipReason, sourceSignal, report)
+        })));
+      } finally { await closeOcr(); }
+    } else {
+      // Download-first (YouTube): audio + video streams fetched in parallel, then parsed at CPU speed.
+      // Falls back to the normal page-player path when the streams cannot be downloaded.
+      let streams = null;
+      // very long videos (e.g. a 12 h stream) are heard + scanned through the page player instead: memory stays small
+      const maxH = Number(job.settings?.downloadMaxHours) || 0;
+      const tooLong = maxH > 0 && job.durationSec > maxH * 3600;
+      // a job resumed after a model failure already has its transcript and slide scan in the saved draft: no need to fetch the video again
+      const saved = job.resume && !job.regenerate ? await getDraft(job.url).catch(() => null) : null;
+      const mediaDone = !!(saved?.segments && saved?.scan);
+      if (mediaDone) log.info('job', 'Resuming: the transcript and slide scan are already saved, the video is not fetched again');
+      const ytLocal = !mediaDone && job.mode === 'youtube' && job.settings?.engine !== 'gemini' && !!job.youtubeId;
+      const ytDownload = ytLocal && job.settings?.downloadFirst !== false;
+      // Captions the page's player could not give: ask yt-dlp in the local bridge (seconds, no listening).
+      // Order for a YouTube transcript: page player captions (content.js) -> yt-dlp captions -> downloaded audio
+      // (the extension's own download, else yt-dlp's) -> listening to the page player (last resort).
+      let transcript = job.transcript;
+      let bridge = null;
+      const bridgeOnce = async () => {
+        if (!bridge) {
+          bridge = await getBridge();
+          if (bridge.error) log.info('download', `yt-dlp (local bridge) not available: ${bridge.error}`);
+        }
+        return bridge.error ? null : bridge;
+      };
+      if (ytLocal && !transcript) {
+        progress('fetch', null, 'Looking for captions with yt-dlp');
+        const b = await bridgeOnce();
+        if (b) {
+          try {
+            const r = await bridgeSubs(b, job.youtubeId, signal);
+            transcript = r.text;
+            log.info('download', `Captions found with yt-dlp (${r.lang || 'unknown language'}): no listening needed`, { lines: r.text.split(String.fromCharCode(10)).length });
+          } catch (e) {
+            if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            log.info('download', `yt-dlp found no captions: ${e.message}`);
+          }
+        }
       }
-      return bridge.error ? null : bridge;
-    };
-    if (ytLocal && !transcript) {
-      progress('fetch', null, 'Looking for captions with yt-dlp');
-      const b = await bridgeOnce();
-      if (b) {
+      if (tooLong && ytDownload) {
+        progress('fetch', null, `Long video (${(job.durationSec / 3600).toFixed(1)} h, over the ${maxH} h download limit): listening and grabbing slides through the page player`);
+        log.alert('download', `Download skipped: video is longer than the ${maxH} h limit, using the page player`, { hours: +(job.durationSec / 3600).toFixed(1), limit_h: maxH });
+      }
+      // what happens when the extension's own stream download fails: with captions nothing is listened to
+      const instead = () => (transcript ? 'the captions are used for the text; the slides are fetched with yt-dlp (else scanned through the page player)' : 'trying yt-dlp next, else listening to the page player');
+      if (!tooLong && ytDownload) {
         try {
-          const r = await bridgeSubs(b, job.youtubeId, signal);
-          transcript = r.text;
-          log.info('download', `Captions found with yt-dlp (${r.lang || 'unknown language'}): no listening needed`, { lines: r.text.split(String.fromCharCode(10)).length });
+          progress('fetch', null, 'Looking for the video streams');
+          const urls = await resolveYoutubeStreams(job.youtubeId, signal);
+          if (!urls.audioUrl) {
+            log.alert('download', `The extension's own stream download is blocked by YouTube (${urls.reason}); ${instead()}`);
+            progress('fetch', null, transcript ? 'Captions found; fetching the video for the slides' : 'No downloadable stream; trying yt-dlp');
+          } else {
+            log.info('download', `Downloading the audio and video streams in parallel (found via ${urls.via})`, { has_video: !!urls.videoUrl });
+            streams = await downloadStreams(urls, { signal, progress, captions: !!transcript });
+            if (!streams) log.alert('download', `The extension's own stream download failed; ${instead()}`);
+          }
         } catch (e) {
           if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-          log.info('download', `yt-dlp found no captions: ${e.message}`);
+          log.alert('download', `The extension's own stream download stopped (${e?.message}); ${instead()}`);
+          streams = null;
         }
       }
-    }
-    if (tooLong && ytDownload) {
-      progress('fetch', null, `Long video (${(job.durationSec / 3600).toFixed(1)} h, over the ${maxH} h download limit): listening and grabbing slides through the page player`);
-      log.alert('download', `Download skipped: video is longer than the ${maxH} h limit, using the page player`, { hours: +(job.durationSec / 3600).toFixed(1), limit_h: maxH });
-    }
-    // what happens when the extension's own stream download fails: with captions nothing is listened to
-    const instead = () => (transcript ? 'the captions are used for the text; the slides are fetched with yt-dlp (else scanned through the page player)' : 'trying yt-dlp next, else listening to the page player');
-    if (!tooLong && ytDownload) {
-      try {
-        progress('fetch', null, 'Looking for the video streams');
-        const urls = await resolveYoutubeStreams(job.youtubeId, signal);
-        if (!urls.audioUrl) {
-          log.alert('download', `The extension's own stream download is blocked by YouTube (${urls.reason}); ${instead()}`);
-          progress('fetch', null, transcript ? 'Captions found; fetching the video for the slides' : 'No downloadable stream; trying yt-dlp');
-        } else {
-          log.info('download', `Downloading the audio and video streams in parallel (found via ${urls.via})`, { has_video: !!urls.videoUrl });
-          streams = await downloadStreams(urls, { signal, progress, captions: !!transcript });
-          if (!streams) log.alert('download', `The extension's own stream download failed; ${instead()}`);
+      // The extension's own download failed or gave no video: let yt-dlp fetch what is missing (audio only when
+      // there is still no transcript; video for the fast slide scan). Without the bridge nothing changes.
+      if (!tooLong && ytDownload && (!streams?.videoBlob || (!streams?.audioBlob && !transcript))) {
+        const b = await bridgeOnce();
+        if (b) {
+          const want = { audio: !transcript && !streams?.audioBlob, video: !streams?.videoBlob, maxHeight: Number(job.settings?.maxWidth) >= 1600 ? 1080 : 720 };
+          log.info('download', `Fetching with yt-dlp: ${[want.audio && 'audio', want.video && 'video'].filter(Boolean).join(' + ')}`);
+          const got = await bridgeMedia(b, job.youtubeId, want, { signal, progress, onError: (kind, e) => log.alert('download', `yt-dlp could not get the ${kind}: ${e.message}`) });
+          const audioBlob = streams?.audioBlob || got.audioBlob || null;
+          const videoBlob = streams?.videoBlob || got.videoBlob || null;
+          if (audioBlob || videoBlob) streams = { audioBlob, videoBlob };
+          if (got.audioBlob || got.videoBlob) log.info('download', 'yt-dlp download done', { audio_mb: got.audioBlob ? Math.round(got.audioBlob.size / 1048576) : 0, video_mb: got.videoBlob ? Math.round(got.videoBlob.size / 1048576) : 0 });
         }
-      } catch (e) {
-        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        log.alert('download', `The extension's own stream download stopped (${e?.message}); ${instead()}`);
-        streams = null;
       }
-    }
-    // The extension's own download failed or gave no video: let yt-dlp fetch what is missing (audio only when
-    // there is still no transcript; video for the fast slide scan). Without the bridge nothing changes.
-    if (!tooLong && ytDownload && (!streams?.videoBlob || (!streams?.audioBlob && !transcript))) {
-      const b = await bridgeOnce();
-      if (b) {
-        const want = { audio: !transcript && !streams?.audioBlob, video: !streams?.videoBlob, maxHeight: Number(job.settings?.maxWidth) >= 1600 ? 1080 : 720 };
-        log.info('download', `Fetching with yt-dlp: ${[want.audio && 'audio', want.video && 'video'].filter(Boolean).join(' + ')}`);
-        const got = await bridgeMedia(b, job.youtubeId, want, { signal, progress, onError: (kind, e) => log.alert('download', `yt-dlp could not get the ${kind}: ${e.message}`) });
-        const audioBlob = streams?.audioBlob || got.audioBlob || null;
-        const videoBlob = streams?.videoBlob || got.videoBlob || null;
-        if (audioBlob || videoBlob) streams = { audioBlob, videoBlob };
-        if (got.audioBlob || got.videoBlob) log.info('download', 'yt-dlp download done', { audio_mb: got.audioBlob ? Math.round(got.audioBlob.size / 1048576) : 0, video_mb: got.videoBlob ? Math.round(got.videoBlob.size / 1048576) : 0 });
+      // HLS / DASH page videos: download the segments, then process the result like any downloaded file
+      const srcUrl = job.videoUrl || job.url;
+      if (!streams && !mediaDone && job.mode === 'video' && job.settings?.engine !== 'gemini' && !job.local && isManifestUrl(srcUrl)) {
+        log.info('download', 'Downloading the HLS/DASH segments', { url: srcUrl });
+        const m = await downloadManifest(srcUrl, { signal, progress });
+        streams = { audioBlob: m.audioBlob, videoBlob: m.videoBlob };
+        log.info('download', 'Segments downloaded', { audio_mb: m.audioBlob ? Math.round(m.audioBlob.size / 1048576) : 0, video_mb: m.videoBlob ? Math.round(m.videoBlob.size / 1048576) : 0 });
       }
-    }
-    // HLS / DASH page videos: download the segments, then process the result like any downloaded file
-    const srcUrl = job.videoUrl || job.url;
-    if (!streams && !mediaDone && job.mode === 'video' && job.settings?.engine !== 'gemini' && !job.local && isManifestUrl(srcUrl)) {
-      log.info('download', 'Downloading the HLS/DASH segments', { url: srcUrl });
-      const m = await downloadManifest(srcUrl, { signal, progress });
-      streams = { audioBlob: m.audioBlob, videoBlob: m.videoBlob };
-      log.info('download', 'Segments downloaded', { audio_mb: m.audioBlob ? Math.round(m.audioBlob.size / 1048576) : 0, video_mb: m.videoBlob ? Math.round(m.videoBlob.size / 1048576) : 0 });
-    }
-    const { title } = await runPipeline({
-      mode: job.mode,
-      key: job.url,
-      videoUrl: job.videoUrl,
-      youtubeId: job.youtubeId,
-      transcript,
-      title: job.title,
-      course: job.course,
-      settings: job.settings,
-      signal,
-      onProgress: progress,
-      regenerate: job.regenerate,
-      skipStages: job.skipStages,
-      ...(streams?.audioBlob ? { getStreamAudio: () => streams.audioBlob } : {}),
-      ...(streams?.videoBlob ? { getStreamVideo: () => streams.videoBlob } : {}),
-      getSource: async () => (await resolveSource({
-        url: job.videoUrl || job.url,
-        local: job.local,
-        skipReason: job.skipReason,
+      ({ title } = await runPipeline({
+        mode: job.mode,
+        key: job.url,
+        videoUrl: job.videoUrl,
+        youtubeId: job.youtubeId,
+        transcript,
+        title: job.title,
+        course: job.course,
+        settings: job.settings,
         signal,
-        progress,
-        headSize: (u) => headSize(u, job.withCookies),
-        readFile: async (fileUrl) => {
-          const res = await fetch(fileUrl, { signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.blob();
-        },
-        fetchRemote: () => fetchVideo(job.videoUrl || job.url, signal, progress, job.settings.engine === 'gemini', job.withCookies)
-      })).blob,
-      // download mode: the scan never asks for this (it seeks the downloaded video); the fallback path does
-      makeGrabber: () => youtubeGrabber(job),
-      getAudio: (p) => youtubeAudio(job, signal, p)
-    });
-    streams = null; // free the downloaded blobs
+        onProgress: progress,
+        regenerate: job.regenerate,
+        skipStages: job.skipStages,
+        ...(streams?.audioBlob ? { getStreamAudio: () => streams.audioBlob } : {}),
+        ...(streams?.videoBlob ? { getStreamVideo: () => streams.videoBlob } : {}),
+        getSource: () => videoSource(job.videoUrl || job.url, job.local, job.skipReason),
+        // download mode: the scan never asks for this (it seeks the downloaded video); the fallback path does
+        makeGrabber: () => youtubeGrabber(job),
+        getAudio: (p) => youtubeAudio(job, signal, p)
+      }));
+      streams = null; // free the downloaded blobs
+    }
     done = { type: 'JOB_DONE', title };
     log.info('job', `Finished "${title || job.url}" in ${Math.round((Date.now() - started) / 1000)} s`);
   } catch (e) {
@@ -350,8 +364,8 @@ async function youtubeAudio(job, signal, progress) {
 const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 /** Size of the video on the server (HEAD through this page, so the Referer rule applies). */
-async function headSize(url, withCookies) {
-  const res = await fetch(url, { method: 'HEAD', credentials: withCookies ? 'include' : 'omit', cache: 'no-store' });
+async function headSize(url, withCookies, signal) {
+  const res = await fetch(url, { method: 'HEAD', credentials: withCookies ? 'include' : 'omit', cache: 'no-store', signal });
   return res.ok ? Number(res.headers.get('content-length')) || 0 : 0;
 }
 

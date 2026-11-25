@@ -9,7 +9,7 @@ export const sleep = () => {};
 export const readGemini = null;
 export const thinkingFor = null;
 export const parseJsonLoose = (t) => JSON.parse(t);
-export const searchTool = () => null;
+export const searchTool = p => ['codexcli', 'claudecli'].includes(p.type) ? 'bridge' : null;
 
 export async function gfetch(url, opts) {
   posts.push({ url, form: opts.body });
@@ -27,7 +27,8 @@ export const failures = [];
 
 export async function generate(p, model, o) {
   const task = /\[TASK:(\w+)\]/.exec(o.prompt)[1];
-  calls.push({ model, task, prompt: o.prompt, maxTokens: o.maxTokens, images: o.images?.length || 0, labels: (o.images || []).map((i) => i.label), session: o.session });
+  calls.push({ model, task, prompt: o.prompt, maxTokens: o.maxTokens, images: o.images?.length || 0, labels: (o.images || []).map((i) => i.label), session: o.session, search: o.search });
+  if (o.singleRequest) Object.assign(calls.at(-1), { singleRequest: true, notesHtml: o.notesHtml });
   const f = failures.find((x) => (!x.model || x.model === model) && (!x.task || x.task === task));
   if (f?.reply) return { text: f.reply, session: f.session, usage: { in: 1, out: 1 } };
   if (f) throw Object.assign(new Error(f.message || `Not found (404): The model \`${model}\` does not exist.`), 'status' in f ? { status: f.status } : {});
@@ -46,12 +47,6 @@ export async function generate(p, model, o) {
     const refs = '\n=== REFERENCES ===\n[{"kind":"document","title":"Basic Treaty of 1972","author":"FRG and GDR","at":"00:40","why":"West Germany recognised East Germany"},{"kind":"book","title":"The Berlin Wall: A World Divided","author":"Frederick Taylor","at":"01:00","why":"cited for the building of the wall"}]';
     return { text: '=== BRIEF ===\nBRIEF-LINE about gods\n=== TIMELINE ===\n' + lines.replace(/story goes on and on/g, 'SUMMARY-LINE') + refs + type, usage: { in: 100, out: 100 } };
   }
-  if (task === 'REFERENCES') {
-    // a fake reference writer: one bullet per numbered source (a title containing OMIT writes only the first one)
-    const titles = [...o.prompt.matchAll(/^\d+\. \[\w+\] (.+?)(?: — [^\n]*)?(?: \(at [^)]*\))?$/gm)].map((m) => m[1]);
-    const use = /notes on "OMIT/.test(o.prompt) ? titles.slice(0, 1) : titles;
-    return { text: '## References\n' + use.map((t) => `- **${t}**: researched background`).join('\n'), usage: { in: 50, out: 50 } };
-  }
   if (task === 'CHUNK') return { text: '## [00:00] Topic\n- point (F1)\n- another', usage: { in: 100, out: 50 } };
   if (task === 'FINAL') return { text: '## Overview\n- ov\n\n## Exam hints\n- eh', usage: { in: 10, out: 10 } };
   if (task === 'QUESTIONS') return { text: '## Practice questions\n### Topic 1\n**Q1.** Why?\n\n**Answer:** 1. because $x=1$', usage: { in: 50, out: 50 } };
@@ -62,24 +57,24 @@ export async function generate(p, model, o) {
     const attached = [...(/PICTURES \(attached[^\n]*/.exec(o.prompt)?.[0] || '').matchAll(/= F(\d+) at/g)].map((m) => Number(m[1]));
     const offered = [...(/Frames you may use: ([^\n]*)/.exec(o.prompt)?.[1] || '').matchAll(/F(\d+)/g)].map((m) => Number(m[1]));
     const extras = offered.filter((n) => !attached.includes(n));
-    return { text: `## Overview\n- o\n\n## Detailed notes\n### Topic A (00:10)\n- **Big idea:** big idea of a\n- **Key points:**\n  - first point here\n    - a sub bullet\n  - second point\n[[FRAME:${attached[0]}]]\n> **Example:** e\n### Topic B (10:00)\n- **Big idea:** second idea\n<!--FIGS ${extras[0]}@1|first point here;${extras[1]}@2-->`, usage: { in: 10, out: 10 } };
+    return { text: `## Overview\n- o\n\n## Detailed notes\n### Topic A (00:10)\n- **Big idea:** big idea of a\n- **Key points:**\n  - first point here\n    - a sub bullet\n  - second point\n[[FRAME:${attached[0]}]]\n> **Example:** e\n### Topic B (10:00)\n- **Big idea:** second idea\n<!--FIGS ${extras[0]}@1|first point here;${extras[1]}@2-->\nMISSING_DETAILS: NO`, usage: { in: 10, out: 10 } };
   }
   if (task === 'WRITE' && /Lecture: CODEDEMO/.test(o.prompt)) {
     // a writer that forgot the output of its code example
-    return { text: '## Overview\n- o\n\n## Detailed notes\n### Adding (00:10)\n- **Big idea:** add\n```python\nprint(2 + 2)\n```\n', usage: { in: 10, out: 10 } };
+    return { text: '## Overview\n- o\n\n## Detailed notes\n### Adding (00:10)\n- **Big idea:** add\n```python\nprint(2 + 2)\n```\nMISSING_DETAILS: NO', usage: { in: 10, out: 10 } };
   }
   if (task === 'WRITE' && /Lecture: CUTOFF/.test(o.prompt)) {
-    // first try runs out of room part-way; the retry (more room) finishes, and spells markers "[[FRAME:F3]]"
-    const cut = calls.filter((c) => c.task === 'WRITE').length === 1;
-    return cut
-      ? { text: '## Overview\n- o\n\n## Detailed notes\n### Start (00:10)\n- **Big idea:** half', truncated: true, usage: { in: 10, out: 10 } }
-      : { text: '## Overview\n- o\n\n## Detailed notes\n### Start (00:10)\n- **Big idea:** all\n[[FRAME:F3]]\n### End (05:00)\n- **Big idea:** the end\n', usage: { in: 10, out: 10 } };
+    return { text: '## Overview\n- o\n\n## Detailed notes\n### Start (00:10)\n- **Big idea:** half', truncated: true, usage: { in: 10, out: 10 } };
+  }
+  if (task === 'WRITE_CONTINUE' && /\*\*Big idea:\*\* half/.test(o.prompt)) {
+    return { text: '### End (01:00)\n- **Big idea:** the end\n[[FRAME:F3]]\n<!--MISSING_DETAILS: no-->', usage: { in: 10, out: 10 } };
   }
   if (task === 'WRITE') {
     const full = /## Overview/.test(o.prompt.split('\nOUTPUT (')[1] || '');
     const n = (o.prompt.match(/part (\d+) of/) || [, '1'])[1];
     const body = `### Topic ${n} (00:10)\n- **Big idea:** big ${n}\n> **[EXTRA]:** e\n>\n> Supplemental explanation continues here.\n[[VISUAL: Sine | shows sine | amplitude slider]]\n$$x=1$$\n`;
-    return { text: full ? `## Overview\n- o\n\n## Detailed notes\n${body}\n## Exam hints\n- h` : body, usage: { in: 1000, out: 500 } };
+    const notes = full ? `## Overview\n- o\n\n## Detailed notes\n${body}\n## Exam hints\n- h` : body;
+    return { text: `${notes}\nMISSING_DETAILS: NO`, usage: { in: 1000, out: 500 } };
   }
   return { text: 'x', usage: { in: 1, out: 1 } };
 }

@@ -7,11 +7,13 @@
  * Google's terms prohibit automated access to the consumer app: keep volume low, prefer a secondary account.
  */
 import { chromium } from 'playwright-core';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
-import { GeminiLoginRequired } from './geminihttp.mjs';
+import { GeminiLoginRequired, parseReply } from './geminihttp.mjs';
+import { parseModel, geminiBrowserSession, geminiBrowserSessionFor, pickModel } from './gemini-selection.mjs';
+import { readGeminiMarkdown } from './gemini-reply.mjs';
+export { parseModel } from './gemini-selection.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROFILE = process.env.GEMINI_PROFILE || join(HERE, 'profile');
@@ -21,14 +23,6 @@ export const LAUNCH = { channel: 'chrome', args: ['--disable-blink-features=Auto
 // 2 min, at most 60 min) for the whole answer, but return the moment it is complete (stop button gone and the text has stopped growing).
 const MAX_REPLY_MS = Math.max(120000, Math.min(3600000, Number(process.env.GEMINI_MAX_MS) || 1800000));
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
-
-/** "hydrogen-low" -> { model: 'Hydrogen', level: 'Low' }; "auto" -> no change. */
-export function parseModel(id) {
-  const m = /^(auto|hydrogen|neon)(?:[-:](low|medium|high))?$/i.exec(String(id || 'auto').trim());
-  if (!m) return { model: null, level: null };
-  const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : null);
-  return { model: m[1].toLowerCase() === 'auto' ? null : cap(m[1]), level: cap(m[2]) };
-}
 
 let ctx = null;
 let queue = Promise.resolve();
@@ -94,6 +88,27 @@ export async function exportGoogleCookies() {
 
 export async function closeGemini() { const c = ctx; ctx = null; await c?.close().catch(() => {}); }
 
+/** Render the self-contained notes in an isolated browser, with no network or scripts. */
+export async function renderNotesPdf(html, signal) {
+  signal.throwIfAborted();
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const close = () => browser.close().catch(() => {});
+  signal.addEventListener('abort', close, { once: true });
+  try {
+    signal.throwIfAborted();
+    const context = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: 'block' });
+    await context.route('**/*', route => route.abort());
+    const page = await context.newPage();
+    await page.setContent(html, { waitUntil: 'load' });
+    const buffer = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+    if (buffer.length > MAX_FILE_BYTES) throw new Error('The combined notes PDF is too large to attach.');
+    return { name: 'combined-lecture-notes.pdf', mimeType: 'application/pdf', buffer };
+  } finally {
+    signal.removeEventListener('abort', close);
+    await close();
+  }
+}
+
 /** One request at a time: they all share one browser profile. */
 export function askGemini(job) {
   return inProfile(() => ask(job));
@@ -104,10 +119,12 @@ async function signedOut(page) {
   return page.getByRole('link', { name: /^sign in$/i }).or(page.getByRole('button', { name: /^sign in$/i })).first().isVisible();
 }
 
-async function ask({ prompt, system, images = [], model: modelId, signal, onProgress }) {
+async function ask({ prompt, system, images = [], notesPdf, model: modelId, signal, onProgress, session }) {
   signal?.throwIfAborted();
   onProgress?.('Opening Gemini in the bridge browser');
-  const { model, level } = parseModel(modelId);
+  const selection = parseModel(modelId);
+  if (!selection) throw Object.assign(new Error('Unknown Gemini web model.'), { status: 400 });
+  if (session && !geminiBrowserSession(session)) throw Object.assign(new Error('This Gemini chat cannot be resumed in the browser.'), { status: 409 });
   const c = await context();
   const page = await c.newPage();
   const fail = async (msg, status = 502) => {
@@ -116,7 +133,7 @@ async function ask({ prompt, system, images = [], model: modelId, signal, onProg
   };
   signal?.addEventListener('abort', () => page.close().catch(() => {}), { once: true });
   try {
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 120000 });
+    await page.goto(`https://gemini.google.com/app${session ? '/' + session.chatId : ''}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
     if (await signedOut(page)) throw new GeminiLoginRequired();
     const box = page.locator('[role=textbox]').first();
     try { await box.waitFor({ timeout: 90000 }); } catch {
@@ -124,21 +141,37 @@ async function ask({ prompt, system, images = [], model: modelId, signal, onProg
       await fail('Gemini web: the input box did not appear (the page layout may have changed).');
     }
     if (await signedOut(page)) throw new GeminiLoginRequired();
-    if (model || level) await pickModel(page, model, level).catch((e) => fail(`Gemini web: could not select ${modelId} (${e.message.split('\n')[0]}).`));
-    if (images.length) {
-      onProgress?.('Uploading images in the Gemini browser');
-      await attach(page, images.slice(0, 10)).catch((e) => fail(`Gemini web: could not attach the pictures (${e.message.split('\n')[0]}).`));
+    const responses = page.locator('model-response, message-content:not(model-response message-content), .model-response-text:not(model-response .model-response-text):not(message-content .model-response-text)');
+    if (session) {
+      await responses.first().waitFor({ timeout: 20000 }).catch(() => fail('The original Gemini conversation did not load.', 409));
+      if (geminiBrowserSessionFor(page.url())?.chatId !== session.chatId) await fail('The original Gemini conversation is unavailable.', 409);
+    }
+    if (images.length + Number(!!notesPdf) > 10) await fail('Gemini can take up to 10 attachments. With a notes PDF, use at most 9 question screenshots that need to be sent as images.', 400);
+    if (images.length || notesPdf) {
+      onProgress?.(notesPdf ? 'Uploading the combined notes PDF and any assignment images' : 'Uploading images in the Gemini browser');
+      await attach(page, images, notesPdf).catch((e) => fail(`Gemini web: could not attach the files (${e.message.split('\n')[0]}).`));
     }
     await box.click();
     const text = system ? `${system}\n\n${prompt}` : prompt;
     // Long prompts: type() is slow, so insert the text in one go.
     await box.evaluate((el, t) => { el.focus(); document.execCommand('insertText', false, t); }, text);
+    await pickModel(page, selection).catch((e) => fail(`Gemini web: could not verify ${modelId || 'auto'} (${e.message.split('\n')[0]}).`));
+    await box.focus();
+    const resp = responses.nth(await responses.count());
+    let rawReply;
+    page.on('requestfinished', async request => {
+      if (request.method() !== 'POST' || !request.url().includes('/StreamGenerate?')) return;
+      try {
+        const response = await request.response();
+        const reply = response?.ok() && parseReply(await response.text());
+        if (reply?.complete) rawReply = reply.text;
+      } catch { /* The rendered answer is still available. */ }
+    });
     const t0 = Date.now();
     await page.keyboard.press('Enter');
-    onProgress?.('Prompt submitted in the Gemini browser. Waiting for an answer');
+    onProgress?.(`Prompt submitted in Gemini ${selection.model}${selection.level ? ' · ' + selection.level : ''}. Waiting for an answer`);
     const deadline = t0 + MAX_REPLY_MS;
     const mins = Math.round(MAX_REPLY_MS / 60000);
-    const resp = page.locator('message-content, .model-response-text, .markdown').last();
     // thinking models show nothing for a while: wait for the answer to start, up to the same overall limit
     try { await resp.waitFor({ timeout: Math.max(1000, deadline - Date.now()) }); } catch { await fail(`Gemini web did not start answering within ${mins} min.`, 504); }
     // "busy" = the Stop button (or a progress spinner) is still on screen; done = not busy and the text is stable
@@ -146,7 +179,8 @@ async function ask({ prompt, system, images = [], model: modelId, signal, onProg
     let last = '', stable = 0, done = false;
     while (Date.now() < deadline) {
       await page.waitForTimeout(1000);
-      const cur = (await resp.innerText().catch(() => '')).trim();
+      const body = resp.locator('message-content, .model-response-text, .markdown').first();
+      const cur = (await (await body.count() ? body : resp).innerText({ timeout: 2000 }).catch(() => '')).trim();
       stable = cur && cur === last ? stable + 1 : 0;
       last = cur;
       const working = await busy();
@@ -157,46 +191,26 @@ async function ask({ prompt, system, images = [], model: modelId, signal, onProg
     }
     if (!last) await fail(`Gemini web returned no answer within ${mins} min.`, 504);
     if (!done) console.log(`[gemini-web] the answer was still changing after ${mins} min; returning what is there`);
+    const body = resp.locator('.markdown, message-content, .model-response-text').first();
+    const rendered = rawReply ? '' : await readGeminiMarkdown(await body.count() ? body : resp).catch(() => '');
+    last = (rawReply || rendered || last).replace(/```[a-z]*\?code_(?:reference|stdout)[^\n]*\n[\s\S]*?```\s*/g, '').trim();
     // Known quirk: the reply can end with the attached file's name.
     for (let i = 0; i < images.length; i++) last = last.replace(/\n?\s*image-?\d*\.(png|jpe?g|webp)\s*$/i, '').trim();
-    return { text: last, usage: { in: 0, out: 0 }, truncated: false };
+    return { text: last, usage: { in: 0, out: 0 }, truncated: !done && !rawReply, session: geminiBrowserSessionFor(page.url()) };
   } finally {
     await page.close().catch(() => {});
   }
 }
 
-const PILL = /^(Auto|Hydrogen|Neon)$/;
-
-/** Choose model and thinking level, only clicking when the current choice differs. */
-async function pickModel(page, model, level) {
-  const pill = () => page.getByText(PILL).first();
-  if (model && (await pill().innerText().catch(() => '')).trim() !== model) {
-    await pill().click();
-    await page.getByText(`4 ${model}`, { exact: true }).first().click();
-    await page.waitForTimeout(800);
-    if ((await pill().innerText().catch(() => '')).trim() !== model) throw new Error('the model picker did not change');
-  }
-  if (level) {
-    await pill().click();
-    await page.getByText('Thinking level', { exact: true }).first().click();
-    await page.getByText(level, { exact: true }).first().click();
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(500);
-  }
-}
-
 /** Upload pictures through the "+" menu (found by label, not by coordinates). */
-async function attach(page, images) {
-  const dir = join(tmpdir(), `lh-gemini-${Date.now()}`);
-  mkdirSync(dir, { recursive: true });
+async function attach(page, images, notesPdf) {
   const files = images.map((im, i) => {
     const buf = Buffer.from(im.b64, 'base64');
     if (buf.length > MAX_FILE_BYTES) throw new Error('picture too large');
     const ext = /jpe?g/.test(im.mime || '') ? 'jpg' : /webp/.test(im.mime || '') ? 'webp' : 'png';
-    const f = join(dir, `image-${i + 1}.${ext}`);
-    writeFileSync(f, buf);
-    return f;
+    return { name: `image-${i + 1}.${ext}`, mimeType: im.mime || 'image/png', buffer: buf };
   });
+  if (notesPdf) files.unshift(notesPdf);
   const plus = page.getByRole('button', { name: /upload|add files|open upload|attach|^\+$/i }).first();
   await plus.click({ timeout: 8000 });
   const item = page.getByText('Upload files', { exact: true }).first();

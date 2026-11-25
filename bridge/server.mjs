@@ -19,7 +19,7 @@ import { runClaude, findClaude } from './claude.mjs';
 import { runCodex, findCodex } from './codex.mjs';
 import { geminiLoginCheck, status, fixes } from './checks.mjs';
 import { askGeminiHttp } from './geminihttp.mjs';
-import { langdock, resetLangdock, saveCookieHeader } from './langdock.mjs';
+import { geminiBrowserSession, needsGeminiBrowser, parseModel } from './gemini-selection.mjs';
 import { statSync, createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import * as yt from './youtube.mjs';
@@ -81,16 +81,12 @@ const server = createServer(async (req, res) => {
       return send(res, 200, geminiProgress.get(req.url.slice('/progress/'.length)) || {}, okOrigin);
     }
     if (req.method === 'GET' && req.url === '/health') {
-      return send(res, 200, { ok: true, backends: { 'claude-cli': !!findClaude(), 'codex-cli': !!findCodex(), 'gemini-web': true, langdock: true } }, okOrigin);
+      return send(res, 200, { ok: true, backends: { 'claude-cli': !!findClaude(), 'codex-cli': !!findCodex(), 'gemini-web': true } }, okOrigin);
     }
     if (req.method === 'POST' && req.url === '/shutdown') {
       send(res, 200, { ok: true }, okOrigin);
       setTimeout(async () => { await gemini?.closeGemini?.(); process.exit(0); }, 200);
       return;
-    }
-    if (req.method === 'GET' && req.url === '/models/langdock') {
-      const ld = await langdock().ready();
-      return send(res, 200, { models: ld.models.map((m) => ({ name: m.displayName, vision: m.supportsVision !== false, efforts: m.allowedReasoningEfforts || [] })) }, okOrigin);
     }
     if (req.method === 'GET' && req.url === '/status/gemini') {
       return send(res, 200, await geminiLoginCheck(), okOrigin);
@@ -98,20 +94,10 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/status')) {
       return send(res, 200, await status({ deep: req.url.includes('deep=1') }), okOrigin);
     }
-    if (req.method === 'POST' && req.url === '/setup/langdock-cookie') {
-      const chunks = []; for await (const c of req) chunks.push(c);
-      try {
-        await saveCookieHeader(JSON.parse(Buffer.concat(chunks).toString('utf8')).cookie);
-        resetLangdock();
-        const ld = await langdock().init();
-        return send(res, 200, { ok: true, detail: `Cookie works: signed in to Langdock (${ld.models.length} models).` }, okOrigin);
-      } catch (e) { resetLangdock(); return send(res, 200, { ok: false, detail: e.status === 401 ? 'Langdock refused that cookie (expired or incomplete). Copy it again from a fresh request.' : e.message }, okOrigin); }
-    }
     if (req.method === 'POST' && req.url.startsWith('/setup/')) {
       const what = req.url.slice(7); // fix: playwright | claude | chrome ; login: gemini | claude
-      const table = { ytdlp: fixes.ytdlp, playwright: fixes.playwright, claude: fixes.claude, chrome: fixes.chrome, 'login-gemini': fixes.geminiLogin, 'login-langdock': fixes.langdockLogin, 'login-claude': fixes.claudeLogin, 'login-codex': fixes.codexLogin, 'login-codex-profile': fixes.codexProfileLogin };
+      const table = { ytdlp: fixes.ytdlp, playwright: fixes.playwright, claude: fixes.claude, chrome: fixes.chrome, 'login-gemini': fixes.geminiLogin, 'login-claude': fixes.claudeLogin, 'login-codex': fixes.codexLogin, 'login-codex-profile': fixes.codexProfileLogin };
       if (!table[what]) return send(res, 404, { error: { message: 'Unknown setup step.' } }, okOrigin);
-      if (what === 'login-langdock') resetLangdock(); // pick up the new cookie
       return send(res, 200, await table[what](), okOrigin);
     }
     // ---- YouTube via yt-dlp (captions / audio / video without playing the video) ----
@@ -132,13 +118,21 @@ const server = createServer(async (req, res) => {
       } finally { m.cleanup(); }
       return;
     }
-    if (req.method === 'POST' && req.url === '/generate') {
+    if (req.method === 'POST' && (req.url === '/generate' || req.url === '/pdf')) {
       let size = 0; const chunks = [];
       for await (const c of req) { size += c.length; if (size > MAX_BODY) return send(res, 413, { error: { message: 'Request too large.' } }, okOrigin); chunks.push(c); }
       const j = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       const ac = new AbortController();
       res.on('close', () => { if (!res.writableEnded) ac.abort(); }); // the extension gave up: stop the work
-      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], model: j.model, session: j.session, signal: ac.signal };
+      if (req.url === '/pdf') {
+        if (typeof j.html !== 'string' || !j.html.trim()) return send(res, 400, { error: { message: 'Printable notes are required.' } }, okOrigin);
+        const { buffer } = await (await geminiBackend()).renderNotesPdf(j.html, AbortSignal.any([ac.signal, AbortSignal.timeout(120000)]));
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': buffer.length,
+          ...(okOrigin ? { 'Access-Control-Allow-Origin': okOrigin, Vary: 'Origin' } : {}) });
+        res.end(buffer);
+        return;
+      }
+      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], model: j.model, session: j.session, signal: ac.signal, search: j.search === true && !j.json };
       let out;
       if (j.backend === 'claude-cli') {
         const done = await claudeSlot();
@@ -152,13 +146,20 @@ const server = createServer(async (req, res) => {
         const deadline = setTimeout(() => ac.abort(), 30 * 60000);
         o.onProgress = onProgress;
         try {
-          if (!process.env.GEMINI_BROWSER_ONLY) {
+          if (!parseModel(o.model)) throw Object.assign(new Error('Unknown Gemini web model.'), { status: 400 });
+          const notesHtml = typeof j.notesHtml === 'string' && j.notesHtml;
+          if (notesHtml) {
+            onProgress('Making a PDF of the combined notes locally');
+            o.notesPdf = await (await geminiBackend()).renderNotesPdf(notesHtml, ac.signal);
+          }
+          const browserOnly = notesHtml || process.env.GEMINI_BROWSER_ONLY || needsGeminiBrowser(o.model, o.session);
+          if (!browserOnly) {
             try { out = await askGeminiHttp(o); } catch (e) {
               if (e.status === 401 || o.signal.aborted || o.session) throw e;
               console.log(`Gemini HTTP failed (${e.message}); using the browser.`);
             }
           }
-          if (!out && o.session) throw Object.assign(new Error("Gemini conversation is unavailable."), { status: 409 });
+          if (!out && o.session && !geminiBrowserSession(o.session)) throw Object.assign(new Error('The previous Gemini conversation cannot be resumed through this route.'), { status: 409 });
           if (!out) {
             onProgress('Waiting for the Gemini browser to become available');
             out = await (await geminiBackend()).askGemini(o);
@@ -171,10 +172,6 @@ const server = createServer(async (req, res) => {
           clearTimeout(deadline);
           if (id) geminiProgress.delete(id);
         }
-      } else if (j.backend === 'langdock') {
-        out = await langdock().ask(o.system ? `${o.system}
-
-${o.prompt}` : o.prompt, { ...(({ model, effort }) => ({ model, effort: effort || j.effort }))(splitEffort(j.model)), images: o.images, session: o.session, signal: o.signal });
       } else return send(res, 400, { error: { message: `Unknown backend "${j.backend}".` } }, okOrigin);
       return send(res, 200, out, okOrigin);
     }

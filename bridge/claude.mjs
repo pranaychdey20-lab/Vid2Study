@@ -4,7 +4,7 @@
  * A plain `claude -p` loads the whole Claude Code harness (tool schemas, CLAUDE.md files, memory, skills, MCP
  * servers, plugins, ~100K+ tokens) into every request. For "write me some notes" none of it is needed, so it is
  * stripped with flags, while keeping OAuth/keychain auth working:
- *   --tools ""                    no built-in tools (their schemas are most of the overhead)
+ *   --tools ""                    no built-in tools by default, or only WebSearch when requested
  *   --system-prompt <text>        replaces the default Claude Code system prompt
  *   --setting-sources ""          no user / project / local settings, hooks, CLAUDE.md, memory
  *   --strict-mcp-config + empty   no MCP servers
@@ -43,13 +43,14 @@ export function findClaude() {
  * @param {{model?:string, prompt:string, system?:string, images?:{mime:string,b64:string}[], effort?:string, signal?:AbortSignal}} o
  * @returns {Promise<{text:string, usage:{in:number,out:number}, truncated:boolean}>}
  */
-export function runClaude({ model, prompt, system, images = [], effort, signal }) {
+export function runClaude({ model, prompt, system, images = [], effort, signal, search = false }) {
   const bin = findClaude();
   if (!bin) return Promise.reject(Object.assign(new Error('Claude CLI not found. Install it (npm i -g @anthropic-ai/claude-code), run `claude` once to sign in, or set CLAUDE_BIN.'), { status: 503 }));
   emptyDir ||= mkdtempSync(join(tmpdir(), 'lh-claude-'));
-  const args = ['-p', '--output-format', images.length ? 'stream-json' : 'json', '--tools', '', '--system-prompt', system || DEFAULT_SYSTEM,
+  const args = ['-p', '--output-format', images.length ? 'stream-json' : 'json', '--tools', search ? 'WebSearch' : '', '--system-prompt', system || DEFAULT_SYSTEM,
     '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     '--disable-slash-commands', '--no-session-persistence'];
+  if (search) args.push('--allowedTools', 'WebSearch');
   if (model) args.push('--model', model);
   if (['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) args.push('--effort', effort);
   // With pictures the prompt goes in as a stream-json user message (text + image blocks); otherwise plain stdin.

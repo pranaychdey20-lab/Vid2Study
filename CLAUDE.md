@@ -146,8 +146,8 @@ For a local file or a downloaded YouTube stream, `runLocalPipeline` runs the tra
 - Every WRITE reply ends with `<!--NEEDS practice=yes|no math=yes|no-->` (`takeNeeds` strips it, `draft.needs`). practice=no
   on all parts skips [TASK:QUESTIONS]; math=no skips the AI math fix (local lint still runs). Missing line = follow settings.
 - Gemini web (bridge/geminiweb.mjs, browser path): waits up to `GEMINI_MAX_MS` (default 30 min, min 2 min, max 60 min) and returns as soon
-  as the Stop button is gone and the text is stable; timeouts are HTTP 504 and are not retried. Model checks wait 10 min for Gemini web / Langdock.
-- Long silent requests (Gemini web HTTP `StreamGenerate`, Langdock `/api/engine`) use `bridge/longfetch.mjs` (node:http/https, no silence
+  as the Stop button is gone and the text is stable; timeouts are HTTP 504 and are not retried. Model checks wait 10 min for Gemini web.
+- Long silent requests (Gemini web HTTP `StreamGenerate`) use `bridge/longfetch.mjs` (node:http/https, no silence
   limit) because Node's `fetch` gives up after 5 min without a byte, which made the bridge fall back to the slow browser path. The bridge
   also logs `uncaughtException` / `unhandledRejection` instead of dying (a crash shows as "Failed to fetch" in the extension). Restart the
   bridge after editing anything in `bridge/`.

@@ -1,5 +1,5 @@
 /**
- * A fetch for REQUESTS THAT MAY STAY SILENT FOR MINUTES (a thinking model on Gemini web, a Langdock stream that waits).
+ * A fetch for REQUESTS THAT MAY STAY SILENT FOR MINUTES (a thinking model on Gemini web).
  * Node's built-in fetch gives up after 5 minutes without a header or a body byte (undici's default), and the bridge then
  * falls back to the slow browser path or fails with "fetch failed". This one uses node:http / node:https, which have no
  * such limit: the only ways it ends are the server answering or the caller's `signal`.

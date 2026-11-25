@@ -52,15 +52,6 @@ export function claudeLoginCheck() {
   } catch { return { ok: false, detail: 'Could not read the Claude sign-in status' }; }
 }
 
-/** Langdock: a session file exists and the saved cookie still works (one cheap request). */
-export async function langdockLoginCheck() {
-  try {
-    const { Langdock } = await import('./langdock.mjs');
-    const ld = await new Langdock().init();
-    return { ok: true, detail: `Signed in to Langdock (${ld.models.length} models)` };
-  } catch (e) { return { ok: false, detail: e.status === 401 ? 'Not signed in to Langdock' : String(e.message).split('\n')[0] }; }
-}
-
 export async function geminiLoginCheck({ refresh = false } = {}) {
   if (!playwrightCheck().ok || !chromeCheck().ok) return { ok: false, detail: 'Needs Chrome and playwright-core first' };
   try {
@@ -75,8 +66,8 @@ export async function geminiLoginCheck({ refresh = false } = {}) {
 /** All checks. `deep` also opens headless Chrome to verify the Google sign-in (about 10 s). */
 export async function status({ deep = false } = {}) {
   const out = { node: nodeCheck(), playwright: playwrightCheck(), chrome: chromeCheck(), claude: claudeCheck(), claudeLogin: claudeLoginCheck() };
-  [out.codexLogin, out.langdockLogin, out.geminiLogin, out.ytdlp] = await Promise.all([
-    codexLoginCheck(), langdockLoginCheck(),
+  [out.codexLogin, out.geminiLogin, out.ytdlp] = await Promise.all([
+    codexLoginCheck(),
     deep ? geminiLoginCheck() : { ok: null, detail: 'Not checked (use the full check)' },
     ytdlpCheck()
   ]);
@@ -155,10 +146,6 @@ export const fixes = {
     if (!findCodex()) return checked;
     if (!WIN) return { ok: false, detail: 'Stop the bridge, then run node login.mjs --chatgpt in the bridge folder.' };
     return fixes.geminiLogin(false, { chatgpt: true });
-  },
-  async langdockLogin(inherit = false) {
-    const ok = await runLong('node', ['login-langdock.mjs'], inherit);
-    return { ok, detail: 'Langdock sign-in window closed' };
   },
   /** Claude sign-in needs a terminal; open one on Windows, else the user runs `claude auth login`. */
   async claudeLogin(inherit = false) {

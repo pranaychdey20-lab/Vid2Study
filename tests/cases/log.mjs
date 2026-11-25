@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-const { log, clean, clip, appendLog } = await import('./lib/log.js');
+const { log, clean, clip, appendLog, deleteLectureLogs } = await import('./lib/log.js');
 
 // secrets never reach the stored text or data
 assert.equal(clip('bad key AIzaSyA1234567890abcdefghijklmnop used').includes('AIza'), false);
@@ -49,6 +49,10 @@ log.error('test', 'error line', new Error('x'));
   assert.equal(g[2].entries.length, 2, 'entries without a job are collected together');
   assert.equal(groupJobs([{ t: now - 3600000, level: 'info', scope: 'queue', msg: 'x', job: 'z', jobTitle: 'Z' }])[0].status, 'interrupted');
   assert.equal(groupJobs([{ t: now - 1000, level: 'info', scope: 'queue', msg: 'x', job: 'z', jobTitle: 'Z' }])[0].status, 'running');
+  assert.equal(groupJobs([
+    { t: now - 2000, scope: 'queue', job: 'z', data: { status: 'paused' } },
+    { t: now - 1000, scope: 'queue', job: 'z', data: { status: 'running' } }
+  ])[0].status, 'running');
 }
 
 // stored list: newest kept, capped at 1500, oldest dropped
@@ -66,4 +70,15 @@ for (let i = 0; i < 1600; i++) await appendLog({ t: i, level: 'info', scope: 's'
 assert.equal(store.activityLog.length, 1500);
 assert.equal(store.activityLog[0].msg, 'm100');
 assert.equal(store.activityLog.at(-1).msg, 'm1599');
+store.activityLog = [
+  { job: 'legacy', data: { url: 'yt:lecture' } },
+  { job: 'legacy', msg: 'a later stage' },
+  { job: 'current', msg: 'a known queue item' },
+  { job: 'other', data: { url: 'yt:other' } },
+  { msg: 'extension-wide activity' }
+];
+const deletion = deleteLectureLogs('yt:lecture', ['current']);
+await appendLog({ job: 'other', msg: 'recorded during cleanup' });
+await deletion;
+assert.deepEqual(store.activityLog.map(e => e.job), ['other', undefined, 'other']);
 console.log('log ok');

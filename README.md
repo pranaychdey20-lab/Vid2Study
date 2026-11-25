@@ -13,7 +13,7 @@
 ![Local first](https://img.shields.io/badge/transcript%20·%20OCR%20·%20slides-run%20locally-2ea44f?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/npm%20test-22%20suites-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)
-![Providers](https://img.shields.io/badge/AI-Gemini%20·%20OpenAI--compatible%20·%20Anthropic%20·%20Codex%20CLI%20·%20Claude%20CLI%20·%20Langdock-8A2BE2?style=for-the-badge)
+![Providers](https://img.shields.io/badge/AI-Gemini%20·%20OpenAI--compatible%20·%20Anthropic%20·%20Codex%20CLI%20·%20Claude%20CLI-8A2BE2?style=for-the-badge)
 
 **[✨ What you get](#-what-you-get)** · **[🧠 How it works](#-how-it-works)** · **[🎭 Who does what](#-who-does-what-cheap-vs-strong)** · **[🚀 Install](#-install-in-2-minutes)** · **[🖱 Using it](#-using-it)** · **[🔒 Privacy](#-privacy-and-safety)**
 
@@ -57,7 +57,7 @@ flowchart LR
     T --> W
     V2 --> W["✍️ Strong AI writes the notes<br/>10 best frames attached as pictures"]
     W --> P["🧽 Cheap AI polish<br/>maths · overview · code outputs"]
-    P --> R["📚 References + 💬 Quotes<br/>web research"]
+    P --> R["📚 References + 💬 Quotes<br/>from lecture sources"]
     R --> Q["🎯 Practice Paper AI<br/>lecture-grounded questions and answers"]
     Q --> N([📄 Notes: web page · zip · PDF])
 ```
@@ -100,7 +100,7 @@ The **Cheap AI is a pool**: if one model fails (rate limit, quota, outage) the n
 
 ## 📝 What the notes look like
 
-The print view starts with a separate contents page with learning outcomes and a clickable lecture roadmap. Sections use slide excerpts, figures, tables, and typeset equations where relevant. Practice answers can link to a numbered section and show its page number in the print view.
+The PDF starts with a contents section containing learning outcomes and a clickable lecture roadmap. Sections use slide excerpts, figures, tables, and typeset equations. Long tables can continue across A4 pages, and practice answers can link to a numbered section and its PDF page.
 
 ```markdown
 ### Gear Types and Mechanical Power Transmission (07:20)
@@ -123,7 +123,7 @@ The writer adds an **Explanation** box immediately after an item the lecture lea
    ```
 2. Open `chrome://extensions`, switch on **Developer mode**, click **Load unpacked**, and choose the folder that contains `manifest.json`.
 3. Click the toolbar icon → **Options** → **AI providers**. Add a provider and enter its API key, or follow the local bridge setup below for subscription sign-ins.
-4. Pick a **Strong AI** model. Set the other roles as needed and click **Save**, including **Practice Paper AI** if you want a separate question writer. Each Cheap AI fallback has a model list for its own provider.
+4. Pick a **Strong AI** model and set the other roles as needed, including **Practice Paper AI** if you want a separate question writer. Options save automatically. Each Cheap AI fallback has a model list for its own provider.
 5. *(Optional)* In the extension's **Details**, turn on **Allow access to file URLs** so saved lectures are reused instead of fetched again.
 
 > 💡 **Cheapest good start:** Strong = a strong writer, everything else on one Gemini Flash-Lite key. Leave Cheap/Vision/Transcript empty and they all follow the Cheap AI.
@@ -140,7 +140,6 @@ The local bridge in [`bridge/`](bridge) connects Vid2Study to browser sessions a
 | **Gemini web** | Sign in with Google in the bridge’s dedicated Chrome profile. The bridge refreshes its session from that profile. |
 | **ChatGPT (Codex CLI)** | Use **Sign in to ChatGPT** in Options or run `codex login`. The optional shared-profile button opens device-code verification in Gemini’s Chrome profile. Enable device-code sign-in in ChatGPT first. Codex saves its own CLI session and uses your plan’s Codex limits. |
 | **Claude CLI** | Use **Sign in to Claude** in Options or run `claude auth login`. Claude Code saves its own CLI session. |
-| **Langdock** | Sign in to your workspace in Langdock’s dedicated Chrome profile. |
 
 1. On Windows, run `bridge/Start-Bridge.cmd` once to set up the bridge and register automatic startup. Options can start it on demand after setup. On other systems, run `npm install` and `npm start` in `bridge/` to start it manually.
 2. Open **Options → Local helper**. A green dot means connected. A red dot means the provider needs attention and its sign-in button is available. Grey means the bridge could not check the session.
@@ -162,9 +161,10 @@ The bridge listens on localhost. Keep `bridge/token.txt`, the browser profiles, 
 - **📚 Lectures drawer (university LMS).** Open a course page and click **LECTURES**. Every lecture is grouped by module and chapter. Tick a **whole week** with one click, or press **Without notes** to select everything not yet summarised, then **Summarize selected (N)**. They run one after another; a failure never stops the rest, and the queue survives a restart.
 - **From a file.** *Options → Summarize from a file…* takes a video or audio file (and an optional `.vtt`/`.srt`).
 - **YouTube.** The transcript is found without listening whenever possible (the page's player, then `yt-dlp`). Figures come from the video itself, and link back with "Watch at".
-- **Results page.** Copy text (raw LaTeX), **Bundle .zip** (Markdown, offline HTML, images, frame metadata, and captured lecture sources when available). **Print** opens a dedicated tab for printing or saving the paginated notes as a PDF.
-- **Practice questions.** A matching Gemini web or Langdock writer can continue in the same conversation when the complete lecture context is available there. A separate model, a CLI or API model, or an unavailable conversation gets the raw transcript and the writer’s saved slide images.
-- **Activity log.** One collapsible block per job, with the time each stage took.
+- **Results page.** Copy text or download an offline **Bundle .zip**. **Print** saves a PDF in the Lectures downloads folder through the local bridge. **Preview** opens the full notes in a browser tab and can also be printed with Ctrl+P.
+- **Practice questions.** Generate a practice paper from the finished notes, with optional assignment text or screenshots.
+- **Activity log.** Use **Show logs** in the toolbar menu. Running jobs show their latest log line and step progress in the Lectures list, including combined summaries.
+- **Storage cleanup.** In **Saved notes**, **Clear processing files** clears activity logs, debug dumps, transcripts, drafts, and unused frames. Check **Also remove figures from saved notes** to remove embedded figures as well. Finished note text and files you previously downloaded are kept.
 
 ---
 
@@ -204,7 +204,7 @@ It runs the pure logic (chunking, alignment, scene detection, the frame classifi
 - **Gemini web is taking a while.** The job shows when the bridge is uploading images, waiting for answer text, or receiving the answer. Higher reasoning settings can take longer.
 - **Frames look wrong or missing.** While the testing option *Save a debug dump* is on, the results page has a **Debug dump** button: every frame shows whether the code merged it, which AI call kept or dropped it, and why.
 - **"Could not download the video (HTTP 403)".** The link expired or the Referer check failed: reload the lecture page.
-- **Print reports a formula error.** The pre-print check found math that could not be typeset. **Copy text** includes the source LaTeX for inspection.
+- **Print cannot connect to the bridge.** Start or restart the local bridge and try again. **Preview** remains available for browser printing. When an equation cannot be typeset, the export flags it in place and **Copy text** includes the original LaTeX.
 
 </details>
 
@@ -229,7 +229,7 @@ Vid2Study/
 │  ├─ llm.js                Gemini / OpenAI-compatible / Anthropic / bridge providers
 │  ├─ algoviz.js            runs real algorithms and draws every step
 │  └─ vendor/               Whisper (transformers.js), ONNX runtime, Tesseract, KaTeX
-├─ bridge/                  Codex CLI, Claude CLI, Gemini web, Langdock, and yt-dlp
+├─ bridge/                  Codex CLI, Claude CLI, Gemini web, and yt-dlp
 └─ tests/                   `npm test`: pure logic + the pipeline with a fake AI
 ```
 

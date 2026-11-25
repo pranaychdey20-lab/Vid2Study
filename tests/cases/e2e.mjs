@@ -16,8 +16,29 @@ assert.match(a.calls[0].prompt, /compact Markdown[\s\S]*Preserve every substanti
 assert.match(a.r.summary_markdown,/# T\n\n## Overview\n\n- o/); assert.match(a.r.summary_markdown,/## Topics\n\n- 00:10 — Topic 1/); assert.ok(!/Exam hints/.test(a.r.summary_markdown)); // dropped even when the model writes one
 assert.ok(!/\[\[VISUAL/.test(a.r.summary_markdown)); assert.equal(a.r.pipeline.route,'direct');
 console.log('short ok', a.r.usage, a.r.model);
+// A finished-looking response still needs an explicit verdict. A footer-only reply keeps its draft intact.
+{
+  const provider = { id: 'gemini-web', type: 'geminiweb', name: 'Gemini', apiKey: 'k', baseUrl: 'http://localhost' };
+  const session = { backend: 'gemini-browser', chatId: 'sample-conversation' };
+  failures.push(
+    { task: 'WRITE', model: 'neon-high', reply: '## Overview\n- Learn motion\n\n## Detailed notes\n### Motion (00:10)\nMotion changes position.', session },
+    { task: 'WRITE_CONTINUE', model: 'neon-high', reply: 'MISSING_DETAILS: NO' }
+  );
+  try {
+    const { r, calls: records } = await run('missing-footer', 20, {
+      providers: [...settings.providers, provider], strong: { provider: provider.id, model: 'neon-high' }
+    });
+    assert.deepEqual(records.map(call => call.task), ['WRITE', 'WRITE_CONTINUE']);
+    assert.deepEqual(records[1].session, session);
+    assert.match(records[0].prompt, /last nonblank line[\s\S]*MISSING_DETAILS: YES\nMISSING_DETAILS: NO/);
+    assert.match(records[1].prompt, /previous reply omitted[\s\S]*last nonblank line/);
+    assert.match(r.summary_markdown, /Motion changes position\./);
+    assert.doesNotMatch(r.summary_markdown, /MISSING_DETAILS/);
+    assert.equal(r.coverage[0].marker, 'no');
+  } finally { failures.splice(-2); }
+}
 // A yes marker requests one continuation. Web sessions can reuse their existing evidence.
-for (const type of ['geminiweb', 'langdock', 'openai', 'codexcli']) {
+for (const type of ['geminiweb', 'openai', 'codexcli']) {
   const provider = { id: 'writer', type, name: 'Writer', apiKey: 'k', baseUrl: 'http://localhost' };
   const opts = { providers: [...settings.providers, provider], strong: { provider: 'writer', model: 'coverage-model' } };
   const original = '## Overview\n- o\n\n## Detailed notes\n### Motion (00:10)\nOriginal fact.\n\nLater fact.\n\n### Drives (09:00)\nOriginal drive detail.\n\n<!--NEEDS math=no-->';
@@ -30,7 +51,7 @@ for (const type of ['geminiweb', 'langdock', 'openai', 'codexcli']) {
     const { r, calls: records } = await run(`coverage-${type}`, 20, opts);
     assert.deepEqual(records.map(call => call.task), ['WRITE', 'WRITE_CONTINUE']);
     const continuation = records[1];
-    if (type === 'geminiweb' || type === 'langdock') {
+    if (type === 'geminiweb') {
       assert.deepEqual(continuation.session, session);
       assert.doesNotMatch(continuation.prompt, /word 0 blah/);
     } else {
@@ -46,6 +67,23 @@ for (const type of ['geminiweb', 'langdock', 'openai', 'codexcli']) {
   } finally { failures.splice(-2); }
 }
 // long: 100 min -> map (cheap) + several write groups + final
+for (const ending of ['', '\n<!--MISSING_DETAILS: no-->']) {
+  const initial = '## Overview\n- Learn filtering\n## Detailed notes\n### Filtering (00:10)\nA mean filter smooths noisy pixels.' + ending;
+  failures.push(
+    { task: 'DIGEST', model: 'small', reply: '=== COVERAGE CHECKLIST ===\n[{"video":1,"at":"00:20","item":"Work out the mean-filter impulse result","anchors":["mean filter","58","6.44"]}]\n=== BRIEF ===\nFiltering.\n=== TIMELINE ===\n[00:20] mean filter example\n=== REFERENCES ===\n[]' },
+    { task: 'WRITE', model: 'BIG', reply: initial },
+    { task: 'WRITE_CONTINUE', model: 'BIG', reply: '### Filtering (00:10)\nThe mean filter gives $58/9 \\approx 6.44$.\n<!--MISSING_DETAILS: no-->' }
+  );
+  try {
+    const outcome = await run(`checklist-${ending.length}`, 20, { researchReferences: true });
+    assert.deepEqual(outcome.calls.map(call => call.task), ['DIGEST', 'WRITE', 'WRITE_CONTINUE']);
+    assert.match(outcome.calls.at(-1).prompt, /Video 1 at 00:20: Work out the mean-filter impulse result/);
+    assert.match(outcome.r.summary_markdown, /smooths noisy pixels[\s\S]*58\/9/);
+    assert.equal(outcome.r.writerReplies[0].text, initial);
+    assert.deepEqual(outcome.r.coverage[0].unmatched, []);
+    assert.equal(outcome.r.coverage[0].checked, 1);
+  } finally { failures.splice(-3); }
+}
 let b=await run('long',200,{writeFullTranscript:false});
 const tasks=b.calls.map(c=>c.task); console.log(tasks.join(','));
 assert.ok(tasks.filter(t=>t==='CHUNK').length>=14); assert.ok(b.calls.filter(c=>c.task==='CHUNK').every(c=>c.model==='small'));
@@ -86,18 +124,45 @@ console.log('long ok', b.r.usage.bySlot, b.r.pipeline.chunks);
 // web search fallback: the stub model cannot search, so the extension searches and the writer gets the snippets
 {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async (u) => String(u).includes('wikipedia')
-    ? { ok: true, json: async () => ({ query: { search: [{ title: 'Topic T', snippet: 'about <b>T</b>' }] } }) }
-    : { ok: true, text: async () => '<a class="result__a" href="https://example.org/t">T explained</a><a class="result__snippet">a short snippet</a>' };
-  const w = await run('web1', 20);
-  const prompt = w.calls.find((x) => x.task === 'WRITE').prompt;
-  assert.match(prompt, /WEB RESULTS/); assert.match(prompt, /T explained/); assert.match(prompt, /Topic T/);
-  const off = await run('web2', 20, { webSearch: false });
-  assert.ok(!/WEB RESULTS/.test(off.calls.find((x) => x.task === 'WRITE').prompt));
-  globalThis.fetch = async () => { throw new Error('offline'); }; // a failed search must never fail the notes
-  const bad = await run('web3', 20);
-  assert.ok(!/WEB RESULTS/.test(bad.calls.find((x) => x.task === 'WRITE').prompt)); assert.ok(bad.r.summary_markdown);
-  globalThis.fetch = realFetch;
+  const queries = [];
+  globalThis.fetch = async u => {
+    const url = new URL(String(u));
+    if (url.hostname.includes('wikipedia')) return { ok: true, json: async () => ({ query: { search: [] } }) };
+    const query = url.searchParams.get('q') || '';
+    queries.push(query);
+    return { ok: true, text: async () => '<a class="result__a" href="https://example.org/lesson">Word and blah examples</a>' };
+  };
+  const providers = [...settings.providers, { id: 'cli', type: 'codexcli', name: 'Codex', baseUrl: 'http://localhost' }];
+  const opts = { webSearch: true, researchReferences: true, providers, strong: { provider: 'cli', model: 'cli' } };
+  const none = await run('no-gap', 20, opts);
+  assert.equal(queries.length, 0);
+  assert.doesNotMatch(none.calls.find(c => c.task === 'WRITE').prompt, /WEB RESULTS|TOPIC RESEARCH/);
+  failures.push({ task: 'DIGEST', model: 'small', reply: '=== BRIEF ===\nLecture topics\n=== TIMELINE ===\n[00:15] word blah\n=== REFERENCES ===\n[]\n=== RESEARCH GAPS ===\n[01:00] word blah' });
+  try {
+    const researched = await run('topic-web', 20, { ...opts, practiceQuestions: true });
+    assert.deepEqual(queries, ['C word blah']);
+    const writer = researched.calls.find(c => c.task === 'WRITE');
+    assert.ok(!writer.search);
+    assert.match(writer.prompt, /WEB RESULTS[\s\S]*example\.org\/lesson[\s\S]*TOPIC RESEARCH/);
+    assert.equal(researched.calls.find(c => c.task === 'QUESTIONS').search, true);
+    queries.length = 0;
+    const off = await run('web-off', 20, { ...opts, webSearch: false });
+    assert.equal(queries.length, 0);
+    assert.doesNotMatch(off.calls.find(c => c.task === 'WRITE').prompt, /WEB RESULTS|TOPIC RESEARCH/);
+    for (const type of ['geminiweb']) {
+      const webProvider = { id: 'web', type, name: 'Web', baseUrl: 'http://localhost' };
+      const web = await run(`selective-${type}`, 20, {
+        ...opts, providers: [...providers, webProvider], strong: { provider: 'web', model: 'web' }, practiceQuestions: true
+      });
+      assert.equal(queries.length, 0);
+      assert.match(web.calls.find(c => c.task === 'WRITE').prompt, /skip web search entirely/);
+      assert.doesNotMatch(web.calls.find(c => c.task === 'WRITE').prompt, /WEB RESULTS/);
+      assert.match(web.calls.find(c => c.task === 'QUESTIONS').prompt, /Use web search if available/);
+    }
+  } finally {
+    failures.pop();
+    globalThis.fetch = realFetch;
+  }
   console.log('web search fallback ok');
 }
 // a code example the writer left without output gets it from one extra call
@@ -109,17 +174,21 @@ console.log('long ok', b.r.usage.bySlot, b.r.pipeline.chunks);
   assert.match(r.summary_markdown, /print\(2 \+ 2\)\n```\n\n\*\*Output:\*\*\n```text\n4\n```/);
   console.log('outputs pass ok');
 }
-// a writer reply cut off by its output limit is written again with twice the room; odd markers never leak
+// A writer reply cut off by its output limit is continued, preserving the original draft.
 {
   calls.length = 0;
   await runLocalPipeline({ mode: 'text', key: 'cut1', title: 'CUTOFF', course: 'C', settings, signal: new AbortController().signal, onProgress() {}, transcript: mk(2) });
   const r = await getResult('cut1');
   const w = calls.filter((c) => c.task === 'WRITE');
-  assert.equal(w.length, 2); assert.equal(w[1].maxTokens, w[0].maxTokens * 2);
+  assert.equal(w.length, 1);
+  assert.match(calls.find(call => call.task === 'WRITE_CONTINUE').prompt, /Continue from its cutoff/);
   assert.ok(w[0].maxTokens >= 4000, 'a short video still gets room to write');
   assert.match(r.summary_markdown, /the end/);
+  assert.match(r.summary_markdown, /half/);
+  assert.equal(r.writerReplies.length, 2);
+  assert.equal(r.writerReplies[0].truncated, true);
   assert.ok(!/\[\[/.test(r.summary_markdown), 'no raw markers in the notes');
-  console.log('cut-off retry ok');
+  console.log('cut-off continuation ok');
 }
 
 // TEMP DEBUG dump + cheap trim above trimTokens (a reply that loses too much keeps the code-trimmed text)

@@ -26,10 +26,10 @@
   function parseCourse(json) {
     const name = json?.name || json?.title || 'Course';
     const lectures = [];
-    for (const mod of json?.modules || []) {
+    for (const mod of json?.modules?.length ? json.modules : [{ lessons: json?.lessons }]) {
       const modName = mod.title || mod.name || 'Module';
       let n = 0;
-      for (const ch of mod.chapters || []) {
+      for (const ch of mod.chapters?.length ? mod.chapters : [{ lessons: mod.lessons }]) {
         const chName = ch.title || ch.name || '';
         for (const ls of ch.lessons || []) {
           const key = ls?.file?.key;

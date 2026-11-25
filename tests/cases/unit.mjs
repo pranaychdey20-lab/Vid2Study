@@ -73,6 +73,44 @@ assert.equal(settingsProblem(st,'video') , null);
 const st2 = normalizeSettings({ providers:[{id:'g',type:'gemini',name:'G',apiKey:'k',baseUrl:'x'},{id:'o',type:'openai',name:'O',apiKey:'k2',baseUrl:'http://localhost:11434/v1'}], strong:{provider:'g',model:'big'}, cheap:{provider:'o',model:'llama'}, vision:{provider:'g',model:'big'}, sceneThreshold: 7 });
 assert.equal(slotRef(st2,'cheap').model,'llama'); assert.equal(st2.sceneThreshold,0.9);
 console.log('settings ok');
+const migrated = normalizeSettings({
+  providers: [{ id: 'active', type: 'openai', models: ['active-model'] }, { id: 'retired', type: 'retired-backend' }],
+  strong: { provider: 'active', model: 'active-model' },
+  digest: { provider: 'retired', model: 'retired-model' },
+  cheapPool: [{ provider: 'retired', model: 'retired-model' }]
+});
+assert.deepEqual(migrated.providers.map(provider => provider.id), ['active']);
+assert.deepEqual(migrated.digest, { provider: '', model: '' });
+assert.deepEqual(migrated.cheapPool, []);
+assert.deepEqual(migrated.strong, { provider: 'active', model: 'active-model' });
+{
+  const providers = [
+    { id: 'claude', type: 'claudecli' },
+    { id: 'gemini-web', type: 'geminiweb' },
+    { id: 'groq', type: 'openai', models: ['groq-model', 'shared-model'] },
+    { id: 'ollama', type: 'openai', models: ['local-model', 'shared-model'] },
+    { id: 'gemini', type: 'gemini' }
+  ];
+  const scoped = normalizeSettings({
+    providers,
+    strong: { provider: 'claude', model: 'neon-high' },
+    digest: { provider: 'ollama', model: 'groq-model' },
+    vision: { provider: 'ollama', model: 'shared-model' },
+    cheap: { provider: 'ollama', model: 'my-unlisted-model' },
+    practice: { provider: 'ollama', model: 'groq-model', custom: true },
+    video: { provider: 'gemini', model: '' },
+    notes: { provider: 'gemini', model: '' },
+    cheapPool: [{ provider: 'claude', model: 'neon-high' }, { provider: 'gemini-web', model: 'neon-high' }]
+  });
+  assert.deepEqual(scoped.strong, { provider: 'claude', model: '' });
+  assert.deepEqual(scoped.digest, { provider: 'ollama', model: '' });
+  assert.equal(scoped.vision.model, 'shared-model');
+  assert.equal(scoped.cheap.model, 'my-unlisted-model');
+  assert.equal(scoped.practice.model, 'groq-model');
+  assert.equal(scoped.video.model, '');
+  assert.equal(scoped.notes.model, '');
+  assert.deepEqual(scoped.cheapPool, [{ provider: 'gemini-web', model: 'neon-high' }]);
+}
 // extension-side web search: parsers and query
 {
   const ws = await import('./lib/websearch.js');
