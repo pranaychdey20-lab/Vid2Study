@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { Script } from 'node:vm';
+import { readFileSync } from 'node:fs';
 import { completeWriterPrefix, emptyTopics, missingScreenTopics, unmatchedCoverage } from './lib/coverage.js';
 import { renderMarkdown } from './lib/md.js';
-import { libraryIndex, libraryLocation, saveLibraryLecture } from './lib/textbook-library.js';
+import { libraryIndex, libraryLocation, saveLibraryLecture, lectureId, readLibraryManifest } from './lib/textbook-library.js';
+import { libraryShell } from './lib/library-page.js';
 import { readVisual, transformedPixels, visualRuntime } from './lib/textbook-visuals.js';
 
 globalThis.document = { createElement: () => ({ getContext: () => ({}) }) };
@@ -86,5 +88,26 @@ await saveLibraryLecture(dir, { ...record, key: 'second', title: 'CLAHE' }, html
 await saveLibraryLecture(dir, record, html);
 assert.match(dir.files.get('Vid2Study.html'), /CLAHE/);
 assert.match(dir.files.get('Vid2Study.html'), /Histogram stretching/);
-assert.doesNotThrow(() => new Script(/<script>([\s\S]+)<\/script>/.exec(dir.files.get('Vid2Study.html'))[1]));
 assert.equal(JSON.parse(dir.files.get('Vid2Study-library.json')).entries.length, 2);
+
+// the shelf script exists ONCE (lib/library-ui.js), shared by the standalone page and the extension page
+{
+  const shelfScript = readFileSync(new URL('./lib/library-ui.js', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => new Script(shelfScript), 'the shelf script parses');
+  const id = 'a'.repeat(32);
+  await saveLibraryLecture(dir, { ...record, key: 'third', title: 'Gamma' }, html, '', { shelf: shelfScript, extensionId: id });
+  const page = dir.files.get('Vid2Study.html');
+  assert.match(page, /<script src="\.vid2study\/library\.js"><\/script>/);
+  assert.doesNotMatch(page, /<script>[^<]*function/, 'the page no longer embeds the script');
+  assert.equal(dir.children.get('.vid2study').files.get('library.js'), shelfScript);
+  assert.match(page, new RegExp('href="chrome-extension://' + id + '/library-open\\.html"'));
+  assert.doesNotMatch(libraryIndex([{ subject: 's', module: 'm', category: 'c', title: 't', path: ['s', 'm', 'c', 'n.html'] }]), /chrome-extension/, 'no extension button without an id');
+  assert.doesNotMatch(libraryIndex([], { extensionId: '../../x' }), /chrome-extension/, 'a bad id is ignored');
+  assert.equal((await lectureId('first')).length, 16);
+  assert.equal(await lectureId('first'), JSON.parse(dir.files.get('Vid2Study-library.json')).entries.find(e => e.title === 'Histogram stretching').id);
+  assert.equal((await readLibraryManifest(dir)).length, 3);
+  assert.deepEqual(await readLibraryManifest(new Directory('empty')), []);
+  const shell = libraryShell((await readLibraryManifest(dir)));
+  assert.ok(shell.css.includes('.app') && shell.body.startsWith('<div class="app">') && JSON.parse(shell.json).entries.length === 3);
+  assert.ok(!shell.body.includes('<script'), 'the shell carries no script of its own');
+}
