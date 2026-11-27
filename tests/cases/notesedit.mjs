@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseSections, outline, pickSections, notesFile, parseEditScript, contentProblem, wrapExtra, checkOp, applyOps, describeOp, mentioned,
-  listFigures, moveFigure, removeFigure, renumberFigures, sectionText, setSectionText, sectionTitle } from './lib/notes-edit.js';
+  listFigures, withoutBadVisuals, moveFigure, removeFigure, renumberFigures, sectionText, setSectionText, sectionTitle } from './lib/notes-edit.js';
 
 const F = '\x60'.repeat(3);
 const raw = [
@@ -138,3 +138,31 @@ assert.throws(() => setSectionText(raw, 'Histogram equalisation (02:10)', 'x\n\n
 assert.throws(() => setSectionText(raw, 'Histogram equalisation (02:10)', 'x\n\n### Another'), /headings/);
 assert.equal(sectionTitle('Gamma (08:30)'), 'Gamma');
 console.log('notes edit ok');
+
+// quoted sections are always sent, whatever the scope
+{
+  const md = ['## Detailed notes', '### Alpha (00:10)', 'alpha text about gamma', '### Beta (01:00)', 'beta text', '### Gamma (02:00)', 'gamma text about histograms', '### Delta (03:00)', 'delta text'].join('\n\n');
+  const { sections } = parseSections(md);
+  const one = pickSections(sections, 'explain this', { scope: 'section', focus: sections[0], must: [3] });
+  assert.deepEqual(one.picked.map(p => p.section.n), [3]);
+  const auto = pickSections(sections, 'explain this', { scope: 'auto', focus: sections[0], must: [4] });
+  assert.ok(auto.picked.some(p => p.section.n === 4));
+  const all = pickSections(sections, 'rewrite the whole lecture', { scope: 'lecture', must: [2] });
+  assert.equal(all.picked.length, 4);
+}
+
+// a bad visual is explained to the model, and can be cut out while the text is kept
+{
+  const F3 = '\x60'.repeat(3);
+  const good = F3 + 'visual\n{"type":"image_lab","scene":"low_contrast","ops":["clahe"]}\n' + F3;
+  const bad = F3 + 'visual\n{"type":"image_lab","scene":"low_contrast","ops":[{"op":"clahe","clip":99}]}\n' + F3;
+  const text = 'CLAHE equalises each tile.\n\n' + bad + '\n\nThen tiles are blended.\n\n' + good;
+  const problem = contentProblem(text);
+  assert.match(problem, /visual block 1 is not a valid visual: type "image_lab" rejected its values/);
+  assert.match(contentProblem('x\n\n' + F3 + 'visual\n{"type":"warp_drive"}\n' + F3), /unknown type "warp_drive" \(the only types are: .*image_lab/);
+  const cut = withoutBadVisuals(text);
+  assert.equal(cut.removed, 1);
+  assert.ok(cut.content.includes('CLAHE equalises each tile.') && cut.content.includes('Then tiles are blended.') && cut.content.includes('"scene":"low_contrast","ops":["clahe"]'));
+  assert.ok(!cut.content.includes('"clip":99'));
+  assert.equal(contentProblem(cut.content), null);
+}
