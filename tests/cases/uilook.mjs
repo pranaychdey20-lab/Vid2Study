@@ -1,6 +1,6 @@
 // UI changes: the assistant's look patch is validated, merged and turned into CSS; nothing unsafe gets through.
 import assert from 'node:assert/strict';
-import { sanitizeLook, mergeLook, lookCss, readLookReply, describeLook, safeValue, cleanSvg, orbIcon, sanitizeStored, ORB_ICONS, LOOK_GUIDE } from './lib/ui-theme.js';
+import { sanitizeLook, mergeLook, lookCss, readLookReply, describeLook, safeValue, cleanSvg, orbIcon, sanitizeStored, ORB_ICONS, LOOK_GUIDE, changedElements } from './lib/ui-theme.js';
 
 // ---- reading a reply
 assert.deepEqual(readLookReply('```json\n{"mode":"dark"}\n```'), { mode: 'dark' });
@@ -101,4 +101,15 @@ console.log('uilook ok');
   assert.ok(!only.includes('--y'), 'no colour tokens');
   assert.ok(!only.includes('#out a'), 'links untouched');
   assert.ok(!only.includes('background:var(--w)'), 'page colours untouched');
+}
+
+// the assistant's own parts can be styled, and the parts a patch touches can be found (to outline them)
+{
+  const { patch, dropped } = sanitizeLook({ targets: { sendicon: { transform: 'translateY(-1px)', display: 'block' }, send: { display: 'grid', 'place-items': 'center', padding: '0' }, panel: { display: 'none' } } });
+  assert.deepEqual(Object.keys(patch.targets).sort(), ['send', 'sendicon']);
+  assert.ok(dropped.includes('panel.display'), 'display:none is refused');
+  assert.match(lookCss(patch.reset ? {} : mergeLook({}, patch)), /html\[data-look\] \.ask-send svg\{transform:translateY\(-1px\);display:block\}/);
+  const fake = { querySelectorAll: s => (s === '.ask-send svg' ? [{ s }] : s === '.ask-send' ? [{ s }] : []) };
+  assert.equal(changedElements(patch, fake).length, 2);
+  assert.equal(changedElements({ mode: 'dark', colors: { accent: '#fff' } }, fake).length, 0, 'whole-page changes have no single element');
 }
