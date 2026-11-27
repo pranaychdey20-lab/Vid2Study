@@ -77,10 +77,11 @@ globalThis.fetch = async () => { throw new Error('offline'); };
   calls.length = 0;
   await lp.runLocalPipeline({ mode: 'video', key: 'sr1', title: 'War', course: 'C', settings, signal: new AbortController().signal, onProgress() {} });
   const w = calls.find((c) => c.task === 'WRITE').prompt;
-  assert.match(w, /ON SCREEN \(no figure: title\) text: WORLD WAR II/);
+  assert.match(w, /ON SCREEN F5 OCR:\nWORLD WAR II/);
   assert.ok(!/LESSON BANNER/.test(w), 'text OCR was unsure of is not passed on');
   assert.ok(await getResult('sr1'));
-  console.log('dropped-frame text reaches the writer ok');
+  assert.match(calls.find(c => c.task === 'DESCRIBE').prompt, /Image \d+ = F5 at/);
+  console.log('lower-ranked-frame evidence reaches the writer');
 }
 
 // ---- a quote shown on screen is in the notes as its OWN callout (the frame itself is not needed)

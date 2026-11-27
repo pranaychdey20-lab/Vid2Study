@@ -36,7 +36,7 @@ Turn a lecture into study notes with plain-English explanations, typeset equatio
 | 🧠 **Practice questions that fit** | Pick a dedicated **Practice Paper AI** for lecture-grounded questions and worked answers with references back to the notes. |
 | 📦 **Bulk notes** | On a university LMS course page, tick a whole week (or "Without notes") and queue every lecture at once. |
 | 🛟 **Never loses your work** | Everything is saved as it goes. If a model fails the job **pauses**, you pick another model, and it resumes from where it stopped. |
-| 🖨 **Takes it with you** | Copy the notes, download an offline ZIP, or print a PDF with a separate clickable contents page and linked practice-answer references. |
+| 🖨 **Takes it with you** | Copy notes, save a PDF with clickable contents and practice-answer references, or save interactive HTML as a standalone file or in a searchable offline library. |
 
 ---
 
@@ -69,12 +69,12 @@ flowchart LR
 
 1. **Transcript.** Page captions or a `.vtt`/`.srt` when they exist. Otherwise the audio is transcribed: **Whisper in the browser** (free, private, slow on very long audio) or an optional **cloud speech-to-text** model (Groq, OpenAI or any OpenAI-compatible `/audio/transcriptions`). Large MP4/M4A/WAV files are read piece by piece with flat memory, so a 12-hour file is fine. YouTube captions come from the page's own player, then `yt-dlp` in the bridge, then audio download.
 2. **Trim, losslessly.** Fillers, stutters, sound tags and recognition loops are removed by code; timestamps stay. A transcript still longer than ~3 hours is also tightened by the Cheap AI, which may only drop repetition.
-3. **Slide scan.** The video is sampled every ~2 s (every 2nd sample first, the ones between only where something changed). A learned **motion mask** ignores the presenter's camera box, and the best moment of each scene is picked (still, sharp, fully drawn in).
+3. **Slide scan.** The extension reads every scheduled sample and saves one sharp capture per detected scene change. A motion mask helps ignore the presenter’s camera box. The sampling interval still affects whether a briefly shown slide is captured.
 4. **OCR and a no-AI classifier.** Tesseract reads each frame; edge and layout analysis flags code, tables, diagrams and formulas.
-5. **Code screening.** Repeats and step-by-step build-ups are merged, blank frames dropped, plain text slides OCR already read skip the AI, and the rest is capped per hour, spread over the whole video.
-6. **Transcript AI.** One model reads the whole transcript (plus six frames from start to end) and returns a **brief**, a detailed **timeline**, the **video type** (technical or not) and every **source** mentioned.
-7. **Vision, in very few calls.** *Call 1* looks at **all** candidate frames at low quality in one request (thousands fit) and drops repeats, blur, titles and half-drawn animation states. A code check rescues any drop that names no replacement. *Calls 2* (at most two) look at the survivors in high quality, with the transcript timeline, and rank and describe each in lossless detail. Every image is labelled in three ways (a text line, the id printed on the picture, the prompt list) so captions can never slip onto a neighbouring frame.
-8. **Write.** Up to 60 minutes the **Strong AI** writes everything in one pass; longer lectures it reads the full transcript in 2–3 parts. The ten best frames are attached as **pictures**; every other frame is offered as a description, and it adds one only if it finds it necessary, in one compact line the code places.
+5. **Deduplication.** The extension checks both the picture and OCR before merging slides that share text. Distinct captures keep their evidence through the writing stage.
+6. **Transcript AI.** The model reads the transcript and sampled frames to build a brief, a timeline, a coverage checklist and the source list.
+7. **Vision review.** With Vision AI enabled, all distinct, nonblank captures reach review in batches. The first pass ranks them. The detailed pass preserves their teaching content and identifies whether a screenshot adds information beyond text, math, code or a table.
+8. **Write.** The Strong AI gets OCR and visual descriptions along with the transcript or chunk notes. The highest-ranked pictures are attached within the provider’s image limits. The extension checks for empty sections and uncovered items, puts figures within their relevant topic and source video, and omits a screenshot when the writer and vision review agree its content is reproduced in the notes.
 9. **Finish.** The Cheap AI can polish equations, the overview, and code outputs. The extension assembles the references and figures, adds practice questions if enabled, and records which model actually wrote each part after any fallback.
 
 </details>
@@ -161,8 +161,12 @@ The bridge listens on localhost. Keep `bridge/token.txt`, the browser profiles, 
 - **📚 Lectures drawer (university LMS).** Open a course page and click **LECTURES**. Every lecture is grouped by module and chapter. Tick a **whole week** with one click, or press **Without notes** to select everything not yet summarised, then **Summarize selected (N)**. They run one after another; a failure never stops the rest, and the queue survives a restart.
 - **From a file.** *Options → Summarize from a file…* takes a video or audio file (and an optional `.vtt`/`.srt`).
 - **YouTube.** The transcript is found without listening whenever possible (the page's player, then `yt-dlp`). Figures come from the video itself, and link back with "Watch at".
-- **Results page.** Copy text or download an offline **Bundle .zip**. **Print** saves a PDF in the Lectures downloads folder through the local bridge. **Preview** opens the full notes in a browser tab and can also be printed with Ctrl+P.
-- **Practice questions.** Generate a practice paper from the finished notes, with optional assignment text or screenshots.
+- **Results page.** **Preview** opens a full reader with larger equations, interactive examples and an assistant that uses your configured providers. The assistant can propose an addition to a selected section for you to review, edit and save. Undo and redo are available during that preview session.
+- **Save as HTML.** Save one self-contained lecture or choose a folder for the local library. Open **Vid2Study.html** in that folder to browse it. Equations, saved lecture images and supported visual examples work offline. The assistant runs from the extension preview.
+- **Save as PDF.** The local bridge creates the PDF and the browser asks where to save it. Interactive examples print at their saved defaults. You can also use Ctrl+P from Preview.
+- **Visual examples.** Notes use validated component data for pixel grids, histograms, brightness and contrast, gamma correction, one-dimensional Laplacian sharpening, and matrix comparisons. The renderer supplies the controls and calculations. Model-generated scripts are never run.
+- **Practice questions.** Generate a practice paper from the finished notes, with optional assignment text or screenshots. The paper includes worked solutions for matching assignment questions. Generating again adds a new paper to the saved notes.
+- **Fix formatting.** Repair common Markdown and LaTeX problems in saved notes. If local repair leaves items for review, you can choose whether to send them to the Cheap AI.
 - **Activity log.** Use **Show logs** in the toolbar menu. Running jobs show their latest log line and step progress in the Lectures list, including combined summaries.
 - **Storage cleanup.** In **Saved notes**, **Clear processing files** clears activity logs, debug dumps, transcripts, drafts, and unused frames. Check **Also remove figures from saved notes** to remove embedded figures as well. Finished note text and files you previously downloaded are kept.
 
@@ -204,7 +208,7 @@ It runs the pure logic (chunking, alignment, scene detection, the frame classifi
 - **Gemini web is taking a while.** The job shows when the bridge is uploading images, waiting for answer text, or receiving the answer. Higher reasoning settings can take longer.
 - **Frames look wrong or missing.** While the testing option *Save a debug dump* is on, the results page has a **Debug dump** button: every frame shows whether the code merged it, which AI call kept or dropped it, and why.
 - **"Could not download the video (HTTP 403)".** The link expired or the Referer check failed: reload the lecture page.
-- **Print cannot connect to the bridge.** Start or restart the local bridge and try again. **Preview** remains available for browser printing. When an equation cannot be typeset, the export flags it in place and **Copy text** includes the original LaTeX.
+- **Save as PDF cannot connect to the bridge.** Start or restart the local bridge and try again. **Preview** remains available for browser printing. When an equation cannot be typeset, the export flags it in place and **Copy text** includes the original LaTeX.
 
 </details>
 

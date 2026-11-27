@@ -4,6 +4,7 @@ globalThis.chrome = { runtime: { getURL: path => path } };
 globalThis.fetch = async () => { throw new Error('offline'); };
 
 const { planCombined, stitchCombined, runCombined } = await import('./lib/combined.js');
+const { combinedNotesTitle, savedNotesTitle } = await import('./lib/common.js');
 const { runLocalPipeline, formatReferences } = await import('./lib/local-pipeline.js');
 const { getFrame, getResult, getDraft, putDraft, putFrame } = await import('./lib/db.js');
 const { normalizeSettings } = await import('./lib/settings.js');
@@ -16,6 +17,18 @@ assert.deepEqual(planCombined(selected.map(video => ({ ...video, chapter: '' }))
 assert.deepEqual(planCombined([1, 2, 3, 4].map(i => lecture(i, '25:00'))).map(g => g.videos.length), [3, 1]);
 assert.deepEqual(planCombined([lecture(1, ''), lecture(2, '25:00'), lecture(3, '95:00')]).map(g => g.videos.length), [1, 1, 1]);
 assert.deepEqual(planCombined([lecture(1, '12:00', 'Same'), lecture(2, '12:00', 'Same', 'Module 2')]).map(g => g.videos.length), [1, 1]);
+{
+  const course = 'Robotic Sensing and Vision';
+  const original = { source: 'combined', title: course + ' — Combined notes', course };
+  const intro = 'Introduction to Geometric Transforms';
+  const perspective = 'Perspective Transforms and Image Registration';
+  assert.equal(savedNotesTitle({ ...original, summary_markdown: '## Chapter: ' + intro }), course + ' — ' + intro + ' — Combined notes');
+  assert.equal(savedNotesTitle({ ...original, summary_markdown: '## Chapter: ' + perspective }), course + ' — ' + perspective + ' — Combined notes');
+  assert.equal(savedNotesTitle({ ...original, title: intro + ' — Combined notes', summary_markdown: '## Chapter: ' + intro }), combinedNotesTitle([intro], course));
+  assert.equal(savedNotesTitle({ ...original, summary_markdown: '## Chapter: ' + intro + '\n## Chapter: ' + perspective }), combinedNotesTitle([intro, perspective], course));
+  assert.equal(savedNotesTitle({ ...original, title: 'Custom title' }), 'Custom title');
+  assert.equal(planCombined([lecture(1, '12:00', '', 'Geometric Transforms')])[0].videos[0].module, 'Geometric Transforms');
+}
 
 const note = (key, title) => ({
   key, model: 'Writer', frames: [{ index: 5, figure: 1, filename: 'frame.png', timestamp_seconds: 11 }],

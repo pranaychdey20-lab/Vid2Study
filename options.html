@@ -110,8 +110,8 @@
     <select id="visionProv"></select>
     <label for="visionModelPick">Model</label>
     <select id="visionModelPick"></select>
-    <label class="check"><input id="useVision" type="checkbox"> Describe diagram / chart / board frames with the Vision AI</label>
-    <div class="hint">Never the whole video. Each captured frame is classified on this computer (OCR layout + edge analysis, no AI): frames that look like <b>code, tables, diagrams/charts or equations</b> are sent however much text they hold, plus frames with very little text (boards, drawings). Plain text slides are read by OCR for free. Flagged frames are always placed in the notes and the PDF.</div>
+    <label class="check"><input id="useVision" type="checkbox"> Review distinct screen captures with the Vision AI</label>
+    <div class="hint">The extension reads slide text locally and sends distinct, nonblank captures in batches for visual review. The notes show figures that add information beyond the written explanation.</div>
   </section>
 
   <section>
@@ -121,17 +121,14 @@
     <label for="digestModelPick">Model</label>
     <select id="digestModelPick"></select>
     <div class="hint">Always used (for videos with frames), BEFORE the vision calls. It reads the whole transcript, together with up to 6 frames spread from the start to the end of the video (if the model takes images), and gives three things: (1) a brief summary, sent with all the frames to the screening call; (2) a shortened but detailed timeline with timestamps, sent to the describing calls; (3) the video type (technical, or a story / history / religion video), which decides what a valuable frame is. The Strong AI always gets the full trimmed transcript, never these summaries. Empty = the Cheap AI (pool).</div>
-    <label for="screenInPerHour">Frames the code sends to the screening AI (per hour of video, at most)</label>
-    <input id="screenInPerHour" type="number" min="20" max="1500" step="20">
-    <div class="hint">First the code (no AI) merges repeats, drops blank frames and plain text slides that OCR already read, and keeps at most this many of the rest, spread over the whole video. Only those go to the screening AI, which cuts them further to the important ones.</div>
     <label for="screenImages">Most frames in one screening call (more frames = more calls)</label>
     <input id="screenImages" type="number" min="50" max="3000" step="50">
     <label for="maxRequestMB">Most MB of pictures in one vision request (0 = automatic)</label>
     <input id="maxRequestMB" type="number" min="0" max="200" step="5">
     <div class="hint">Automatic: about 85 MB for Gemini, 17 MB for other services. The pictures are shrunk or split into more calls to stay under it. Lower it if a service answers "request too large".</div>
-    <label for="screenKeepPerHour">Frames kept by the screening call (per hour of video, at most)</label>
+    <label for="screenKeepPerHour">Frames shortlisted in the first review (per hour of video)</label>
     <input id="screenKeepPerHour" type="number" min="10" max="600" step="10">
-    <div class="hint">The Vision AI first looks at ALL the frames at low quality in one call (Gemini Flash-Lite takes thousands), throws away the useless and repeated ones and keeps the important ones. Those are then sent again in high quality to be ranked and described.</div>
+    <div class="hint">This controls the first review’s ranking. All distinct, nonblank captures still reach the detailed review.</div>
   </section>
 
   <section>
@@ -150,12 +147,8 @@
     <div class="hint">The fraction of the picture that must change to count as a new slide. Lower it if slides are missed, raise it if you get many near-duplicates. (This is not ffmpeg's scale: a change to another text slide moves only a few percent of the pixels, so the default is 0.05 here, not 0.3.)</div>
     <label for="sampleSeconds">Look at the video every (seconds)</label>
     <input id="sampleSeconds" type="number" min="1" max="60" step="1">
-    <label for="maxScenes">Most slide changes kept</label>
-    <input id="maxScenes" type="number" min="10" max="3000" step="10">
-    <label for="ocrMinWords">Also send frames with fewer OCR words than</label>
+    <label for="ocrMinWords">OCR word threshold for comparing similar captures</label>
     <input id="ocrMinWords" type="number" min="0" max="200" step="1">
-    <label for="maxVision">Most frames sent to the Vision AI per lecture</label>
-    <input id="maxVision" type="number" min="0" max="300" step="1">
     <label for="chunkMinutes">Chunk length for long lectures (minutes)</label>
     <input id="chunkMinutes" type="number" min="5" max="30" step="1">
     <label for="shortVideoMinutes">Short video limit (minutes): up to this the Strong AI does everything</label>
@@ -166,9 +159,6 @@
     <input id="trimTokens" type="number" min="0" max="1000000" step="5000">
     <div class="hint">Fillers, stutters and repeated lines are always removed by code (no AI, nothing of meaning lost). Only a transcript still longer than this (40000 ≈ 3 hours of speech) is also tightened by the Cheap AI, which may drop only repetition and rambling.</div>
     <label class="check"><input id="debugDump" type="checkbox"> Save a debug dump with every result (temporary, for testing)</label>
-    <label for="scanRefine">Slide scan: read every Nth sample first (1 = every sample)</label>
-    <input id="scanRefine" type="number" min="1" max="3" step="1">
-    <div class="hint">2 (default): reads every 2nd sample and fills in the ones between wherever the picture changed, so anything on screen for at least two samples (4 s at the default) is always found. 1 = read every sample, slowest, catches even a 2 s flash.</div>
     <label for="asrModel">Speech-to-text model (used when there are no captions)</label>
     <select id="asrModel">
       <option value="tiny">Tiny (fastest, least accurate)</option>

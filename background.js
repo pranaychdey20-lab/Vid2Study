@@ -4,7 +4,7 @@
  * (MV3 can stop it at any time), so the queue lives in chrome.storage.session and the
  * "already downloaded" map (url -> file on disk) in chrome.storage.local.
  */
-import { cleanUrl, CONTENT_FILES, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
+import { cleanUrl, CONTENT_FILES, lectureLockName, PROCESSING_LOCK, combinedNotesTitle } from './lib/common.js';
 import { loadSettings, settingsProblem, DEFAULT_SITES, isBridge } from './lib/settings.js';
 import { getResult, hasResult, deleteLectureArtifacts, clearProcessingArtifacts } from './lib/db.js';
 import { log, tapConsole, useLocalStore, appendLog, deleteLectureLogs, clearActivityLog, clip } from './lib/log.js';
@@ -660,8 +660,9 @@ async function handle(msg, sender) {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(batch.map(group => [group.chapterKey, group.videos.map(video => video.url)]))));
       const url = `combined:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`;
       const course = String(msg.course || '').trim();
-      const title = course ? `${course} — Combined notes` : 'Combined lecture notes';
-      if (await hasResult(url)) return { ok: true, url, title, ready: true };
+      const saved = await getResult(url);
+      if (saved) return { ok: true, url, title: saved.title, ready: true };
+      const title = combinedNotesTitle(batch.flatMap(group => group.chapter ? [group.chapter] : group.videos.map(video => video.module || video.title)), course);
       await enqueue([{ url, title, course, courseId: String(msg.courseId || ''), batch, kind: 'summary', mode: 'video', referer: 'https://elearn.iitg.ac.in/' }], tabId);
       return { ok: true, url, title };
     }

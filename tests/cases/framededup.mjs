@@ -54,9 +54,9 @@ const face = (g, v) => { const o = g.slice(); for (let y = 60; y < 88; y++) for 
   const steps = ['x^2 - 5x + 6 = 0', 'x^2 - 5x + 6 = 0 factor (x - 2)(x - 3) = 0', 'x^2 - 5x + 6 = 0 factor (x - 2)(x - 3) = 0 so roots x = 2 or x = 3'];
   const m1 = lp.mergeRepeats(steps.map((s, i) => F(i + 1, i * 20, { words: s.split(' ').length, text: s, kinds: ['formula'] })));
   assert.deepEqual(m1.map((f) => f.index), [3]);
-  // handwriting OCR cannot read: the ink grid still sees the build-up
+  // Added handwritten visual content stays available even when OCR cannot read it.
   const e = [slide([10]), slide([10, 30]), slide([10, 30, 50])].map((g) => sc.inkBlocks(g, W, H));
-  assert.deepEqual(lp.mergeRepeats(e.map((eb, i) => F(i + 1, i * 30, { eb, words: 1, text: '' }))).map((f) => f.index), [3]);
+  assert.deepEqual(lp.mergeRepeats(e.map((eb, i) => F(i + 1, i * 30, { eb, words: 1, text: '' }))).map((f) => f.index), [1, 2, 3]);
   // two different text slides on the same template are NOT merged by the ink grid
   const tA = 'binary search halves the sorted range each step until the target is found or empty';
   const tB = 'hash tables map keys to buckets using a hash function with chaining for collisions';
@@ -64,8 +64,9 @@ const face = (g, v) => { const o = g.slice(); for (let y = 60; y < 88; y++) for 
   assert.equal(lp.mergeRepeats([F(1, 0, { words: 15, text: tA, eb: same }), F(2, 60, { words: 15, text: tB, eb: same })]).length, 2);
   // teacher flips back to an earlier slide: the repeat is dropped
   assert.deepEqual(lp.mergeRepeats([F(1, 0, { words: 15, text: tA }), F(2, 60, { words: 15, text: tB }), F(3, 300, { words: 15, text: tA })]).map((f) => f.index), [1, 2]);
-  // a half-erased board after the full one adds nothing
-  assert.deepEqual(lp.mergeRepeats([F(1, 0, { words: 1, eb: e[2] }), F(2, 20, { words: 1, eb: e[0] })]).map((f) => f.index), [1]);
+  // A changed board remains evidence in case the removal highlights a step.
+  assert.deepEqual(lp.mergeRepeats([F(1, 0, { words: 1, eb: e[2] }), F(2, 20, { words: 1, eb: e[0] })]).map((f) => f.index), [1, 2]);
+  assert.deepEqual(lp.mergeRepeats([F(1, 0, { words: 15, text: tA }), F(2, 60, { words: 15, text: tA, h: '1'.repeat(64) })]).map(f => f.index), [1, 2]);
   console.log('build-up dedup ok');
 }
 
