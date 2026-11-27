@@ -11,6 +11,11 @@ import { makeZip } from './lib/zip.js';
 import { nativeBridge } from './lib/llm.js';
 import { fmtTime, sanitizeName, toCopyText, stripTimestamps, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
 import { bindVisuals, VISUAL_CSS, visualRuntime } from './lib/textbook-visuals.js';
+import { renderMarkdown } from './lib/md.js';
+import { createNotesStore } from './lib/notes-store.js';
+import { loadLook, applyLook } from './lib/ui-theme.js';
+applyLook(loadLook()); // the look the assistant saved (colours, type, motion), before the notes are drawn
+import { mountEditor } from './lib/notes-editor.js';
 
 const params = new URLSearchParams(location.search);
 const key = params.get('key');
@@ -110,7 +115,7 @@ async function compactDataUrl(blob) {
   } catch { return blobToDataUrl(blob); }
 }
 
-async function buildStandaloneHtml(markdown = result.summary_markdown, interactive = false) {
+async function buildStandaloneHtml(markdown = result.summary_markdown, interactive = false, { back = '', shared = '' } = {}) {
   const dataUrls = new Map();
   for (const [name, blob] of images) dataUrls.set(name, await compactDataUrl(blob));
   // printed / exported pages carry no video times (they stay in the stored notes, for the AI and "copy")
@@ -151,10 +156,12 @@ async function buildStandaloneHtml(markdown = result.summary_markdown, interacti
   .contents .snapshot > :last-child > :last-child { margin-bottom: 0; }
   ${result.source === 'combined' ? '.snapshot { display: block; } .snapshot li { break-inside: avoid; } .snapshot ol, .snapshot ul { padding-left: 1.5em; }' : ''}
   @media print { html, body { margin: 0; padding: 0; max-width: none; } img, pre, figure { break-inside: avoid; } h2, h3 { break-after: avoid; } }
+  .lib-back { margin: 0 0 10px; font: 12.5px/1.3 system-ui, sans-serif; } .lib-back a { color: #0e6a64; text-decoration: none; } @media print { .lib-back { display: none; } }
 </style></head><body>
+${back ? `<p class="lib-back"><a href="${escHtml(back)}" target="_top">← Back to the library</a></p>` : ''}
 ${body}
-${interactive ? '<footer><p>AI assistance is available in the extension preview.</p></footer>' : ''}
-${interactive && body.includes('data-study-visual=') ? '<script>' + visualRuntime() + '</script>' : ''}
+${interactive ? '<footer><p>Questions and edits are available in the Vid2Study extension.</p></footer>' : ''}
+${interactive && body.includes('data-study-visual=') ? (shared ? '<script src="' + shared + '"></script>' : '<script>' + await visualRuntime() + '</script>') : ''}
 </body></html>`;
   return !interactive && body.includes('class="page-ref"') ? paginate(html) : html;
 }
@@ -217,10 +224,11 @@ async function downloadZip() {
   await download(await makeZip(files), `${folder}.zip`);
 }
 
-async function openPreview(saveHtml = false) {
+/** Dialogs that need a folder picker cannot open inside the side panel: the same notes open in a full tab for that. */
+async function openInTab(saveHtml = false) {
   const url = new URL(chrome.runtime.getURL('results.html'));
   url.searchParams.set('key', key);
-  url.searchParams.set('preview', '1');
+  url.searchParams.set('preview', '1'); // wide layout; the tab is the same page
   if (saveHtml) url.searchParams.set('save', 'html');
   await chrome.tabs.create({ url: url.href });
 }
@@ -232,7 +240,7 @@ async function savePdf() {
   try {
     const html = await buildStandaloneHtml();
     const bridge = await chrome.runtime.sendMessage({ type: 'BRIDGE_INFO', start: true });
-    if (!bridge?.ok) throw new Error('Start the local bridge to save a PDF. You can also print from Preview.');
+    if (!bridge?.ok) throw new Error('Start the local bridge to save a PDF. You can also print this page from the browser.');
     const requestPdf = (url, token) => {
       const base = new URL(url);
       if (base.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname)) {
@@ -278,35 +286,49 @@ async function init() {
     const blob = await getFrame(`${key}/${f.filename}`);
     if (blob) images.set(f.filename, blob);
   }
-  if (previewView) {
-    $('preview').hidden = true;
-    document.body.classList.add('wide-preview');
-  }
+  if (previewView) document.body.classList.add('wide-preview');
   $('practice').hidden = !(await loadSettings()).practiceQuestions;
-  const blobUrls = new Map();
+  const blobUrls = new Map(), nameOfUrl = new Map();
   for (const [name, blob] of images) {
     const u = URL.createObjectURL(blob);
     objectUrls.push(u);
     blobUrls.set(name, u);
+    nameOfUrl.set(u, name);
   }
 
   document.title = result.title;
   const tokens = result.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '';
-  $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${writerLabel(result)}${tokens}`;
+  let editor = null;
   const draw = () => {
+    $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${writerLabel(result)}${tokens}`;
     $('out').innerHTML = lectureHtml(result, result.summary_markdown, {
       imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
       math: renderMath
     });
     bindVisuals($('out'));
+    editor?.refresh();
   };
   draw();
   $('status').remove();
-  if (previewView) {
-    const { mountAssistant } = await import('./lib/textbook-assistant.js');
-    await mountAssistant({ key, root: $('out'), read: () => result, redraw: next => { result = next; draw(); } })
-      .catch(error => toast(error.message));
-  }
+  // editing (by hand or through the assistant) goes through one store: one undo / redo history, both copies of the notes kept in step
+  const store = createNotesStore({ key, read: () => result, redraw: next => { result = next; draw(); } });
+  editor = mountEditor({ root: $('out'), read: () => result, store, fileOf: img => nameOfUrl.get(img.currentSrc || img.src), toast });
+  const syncEdit = () => { $('undoEdit').disabled = !store.canUndo(); $('redoEdit').disabled = !store.canRedo(); };
+  store.subscribe(syncEdit);
+  const guard = (work) => async () => { try { await work(); } catch (error) { toast(error.message || String(error)); } };
+  $('undoEdit').addEventListener('click', guard(() => store.undo()));
+  $('redoEdit').addEventListener('click', guard(() => store.redo()));
+  $('editNotes').addEventListener('click', () => {
+    const on = editor.toggle();
+    $('editNotes').setAttribute('aria-pressed', String(on));
+    $('editNotes').classList.toggle('on', on);
+    $('editNotes').textContent = on ? 'Done editing' : 'Edit notes';
+    $('undoEdit').hidden = $('redoEdit').hidden = !on;
+    syncEdit();
+  });
+  import('./lib/textbook-assistant.js')
+    .then(({ mountAssistant }) => mountAssistant({ root: $('out'), read: () => result, store, preview: md => renderMarkdown(md, { math: renderMath }) }))
+    .catch(error => toast('The notes assistant could not start: ' + error.message));
   if (previewView && params.get('save') === 'html') openHtmlDialog();
 
   $('repair').addEventListener('click', async () => {
@@ -446,7 +468,7 @@ const openHtmlDialog = () => {
 $('saveHtml').addEventListener('click', () => {
   if (!result) return;
   if (window === window.top) openHtmlDialog();
-  else openPreview(true).catch(error => toast(error.message));
+  else openInTab(true).catch(error => toast(error.message));
 });
 $('saveStandalone').addEventListener('click', async () => {
   if (!result) return;
@@ -478,8 +500,9 @@ $('saveLibrary').addEventListener('click', async () => {
     const root = await window.showDirectoryPicker({ id: 'vid2study-library', mode: 'readwrite' });
     $('htmlStatus').textContent = 'Saving the lecture and updating the library…';
     const { saveLibraryLecture } = await import('./lib/textbook-library.js');
-    const html = await buildStandaloneHtml(result.summary_markdown, true);
-    const saved = await navigator.locks.request('vid2study:library', () => saveLibraryLecture(root, result, html));
+    const html = await buildStandaloneHtml(result.summary_markdown, true, { back: '../../../../Vid2Study.html', shared: '../../../../.vid2study/visuals.js' });
+    const runtime = await visualRuntime();
+    const saved = await navigator.locks.request('vid2study:library', () => saveLibraryLecture(root, result, html, runtime));
     $('htmlStatus').textContent = 'Saved ' + saved.location + '. Open ' + saved.index + ' in the chosen folder to browse the library.';
   } catch (error) {
     if (error.name !== 'AbortError') $('htmlStatus').textContent = 'Library save failed: ' + error.message;
@@ -493,7 +516,6 @@ $('debug').addEventListener('click', () => {
   window.open(URL.createObjectURL(new Blob([result.debug], { type: 'text/plain;charset=utf-8' })), '_blank');
 });
 $('print').addEventListener('click', () => result && savePdf().catch(e => toast(e.message)));
-$('preview').addEventListener('click', () => result && openPreview().catch(e => toast(e.message)));
 $('practice').addEventListener('click', openPractice);
 $('useAssignments').addEventListener('change', () => { $('assignmentInputs').hidden = $('useAssignments').value !== 'yes'; });
 $('paperCancel').addEventListener('click', () => {

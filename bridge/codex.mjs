@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { prepare, attachmentBlock } from './convo.mjs';
 
 const WINDOWS = process.platform === 'win32';
 const LOGIN_REQUIRED = 'Sign in to ChatGPT in a terminal with `codex login`, then try again.';
@@ -116,7 +117,8 @@ function runExec(bin, args, cwd, input, signal) {
   });
 }
 
-export async function runCodex({ model, effort, prompt, system, images = [], signal, search = false }) {
+export async function runCodex({ model, effort, prompt: asked, system, images: pictures = [], attachments: files = [], history = [], signal, search = false }) {
+  const { prompt, images, attachments } = prepare({ prompt: asked, images: pictures, attachments: files, history });
   const bin = findCodex();
   if (!bin) throw failure(INSTALL_REQUIRED, 503);
   if (model && (typeof model !== 'string' || !/^[\w.:-]+$/.test(model) || model.startsWith('-'))) {
@@ -157,7 +159,8 @@ export async function runCodex({ model, effort, prompt, system, images = [], sig
       if (image.label) labels.push(`Image ${i + 1}: ${image.label}`);
     }
     if (files.length) args.push(`--image=${files.join(',')}`);
-    const input = [system, prompt, labels.length ? `Attached images in order:\n${labels.join('\n')}` : ''].filter(Boolean).join('\n\n');
+    // the shell tool is off, so a text file cannot be opened by the model: it goes in the same message as delimited file blocks
+    const input = [system, ...attachments.map(attachmentBlock), prompt, labels.length ? `Attached images in order:\n${labels.join('\n')}` : ''].filter(Boolean).join('\n\n');
     return await runExec(bin, [...args, '--', '-'], cwd, input, signal);
   } finally {
     await rm(cwd, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});

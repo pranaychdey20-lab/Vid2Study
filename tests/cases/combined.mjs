@@ -90,7 +90,7 @@ try {
   assert.equal(extracted, 2);
   assert.equal(peak, 2);
   assert.deepEqual(completionOrder, ['Video 2', 'Video 1']);
-  const prompt = calls.find(call => call.task === 'WRITE').prompt;
+  const prompt = calls.find(call => call.task === 'WRITE').all;
   assert.match(prompt, /VIDEO 1: Video 1[\s\S]*evidence for Video 1[\s\S]*ON SCREEN F1 OCR[\s\S]*VIDEO 2: Video 2[\s\S]*evidence for Video 2[\s\S]*ON SCREEN F2 OCR/);
   failures[0].reply = '## Overview\n- Understand histograms\n## Detailed notes\n### Histogram method (00:10)\nHistogram detail.\n<!--MISSING_DETAILS: no-->';
   failures.push({ task: 'WRITE_CONTINUE', model: 'writer', reply: '### Second method (20:00)\nRecovered detail.\n<!--MISSING_DETAILS: no-->' });
