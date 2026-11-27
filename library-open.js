@@ -54,11 +54,13 @@ async function mount(entries, ids) {
   style.textContent = shell.css +
     '\n#reader{--k:#000;--w:#fff;--g1:#f2f2f2;--g2:#d9d9d9;--g3:#8a8a8a;--y:#FFE500;--red:#E00000;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;' +
     'min-height:100%;background:#fff;color:#000;font:15px/1.65 "Helvetica Neue",Helvetica,Arial,sans-serif}' +
-    '\n.paper-wrap{padding:1.2rem clamp(.6rem,2vw,1.6rem) 2rem;animation:page-in .55s var(--ease) both}' +
+    '\n.paper-wrap{padding:.8rem clamp(.3rem,1vw,.9rem) 1.6rem;animation:page-in .55s var(--ease) both}' +
+    // tables use the full width and keep whole words (the notes page breaks words anywhere, which cuts narrow columns into "techniqu / es")
+    '\n#reader table{display:table;width:100%;table-layout:auto}#reader th,#reader td{overflow-wrap:normal;word-break:normal}#reader th:first-child,#reader td:first-child{min-width:11ch}' +
     '\n#reader{max-width:60rem;margin:0 auto;border-radius:14px;box-shadow:0 24px 50px -30px var(--shadow);min-height:60vh}' +
     '\n#reader.wide,.shell.full #reader{max-width:none}' +
     '\n.zoom{display:inline-flex;align-items:center;gap:.25rem}.zoom span{min-width:3.2rem;text-align:center;color:var(--soft);font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer}' +
-    '\n#reader>article{padding:1.4rem clamp(1rem,3vw,2.4rem) 3rem}' +
+    '\n#reader>article{max-width:none;margin:0;padding:1.4rem clamp(1rem,2.4vw,2.4rem) 3rem}#reader:not(.wide)>article{max-width:56rem;margin:0 auto}' +
     '\nbody.lib-shelf .ask-orb,body.lib-shelf .ask-panel,body.lib-shelf .ask-quote-fab{display:none!important}' +
     '\n.lib-note{padding:1rem 1.3rem;color:var(--muted)}' +
     '\n' + scoped(notesCss) + '\n' + scoped(NOTES_CSS) + '\n' + VISUAL_CSS;
@@ -81,7 +83,7 @@ async function mount(entries, ids) {
   const sync = el('span', { class: 'note', role: 'status' });
   // zoom and width: read small print comfortably, or let the notes use the whole window (also ctrl + scroll over the notes)
   const ZOOM = 'vid2study:zoom';
-  let zoom = Number(localStorage.getItem(ZOOM)) || 1, wide = localStorage.getItem(ZOOM + ':wide') === '1';
+  let zoom = Number(localStorage.getItem(ZOOM)) || 1, wide = localStorage.getItem(ZOOM + ':wide') !== '0'; // the notes cover the whole page by default
   const zoomOut = btn('−', 'Zoom out'), zoomIn = btn('+', 'Zoom in'), zoomLabel = el('span', { title: 'Reset the zoom' }), wideBtn = btn('Wide', 'Use the whole width of the window');
   const applyZoom = () => {
     zoom = Math.min(2.5, Math.max(0.6, Math.round(zoom * 100) / 100));
