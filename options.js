@@ -501,6 +501,7 @@ async function load() {
   $('writeFullTranscript').checked = S.writeFullTranscript !== false;
   $('practiceQuestions').checked = S.practiceQuestions !== false;
   $('researchReferences').checked = S.researchReferences !== false;
+  $('attachData').checked = S.attachData !== false;
   $('debugDump').checked = S.debugDump !== false;
   $('maxFrames').value = S.maxFrames;
   $('maxWidth').value = S.maxWidth;
@@ -552,6 +553,7 @@ function readForm() {
     writeFullTranscript: $('writeFullTranscript').checked,
     practiceQuestions: $('practiceQuestions').checked,
     researchReferences: $('researchReferences').checked,
+    attachData: $('attachData').checked,
     screenImages: clamp($('screenImages').value, 50, 3000, 3000),
     maxRequestMB: clamp($('maxRequestMB').value, 0, 200, 0),
     screenKeepPerHour: clamp($('screenKeepPerHour').value, 10, 600, 250),

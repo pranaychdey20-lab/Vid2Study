@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter } from 'node:path';
+import { prepare } from './convo.mjs';
 
 const DEFAULT_SYSTEM = 'You are a careful writing assistant. Follow the instructions in the user message exactly.';
 let emptyDir;
@@ -43,11 +44,13 @@ export function findClaude() {
  * @param {{model?:string, prompt:string, system?:string, images?:{mime:string,b64:string}[], effort?:string, signal?:AbortSignal}} o
  * @returns {Promise<{text:string, usage:{in:number,out:number}, truncated:boolean}>}
  */
-export function runClaude({ model, prompt, system, images = [], effort, signal, search = false }) {
+export function runClaude({ model, prompt: asked, system, images: pictures = [], attachments: files = [], history = [], effort, signal, search = false }) {
+  const { prompt, images, attachments } = prepare({ prompt: asked, images: pictures, attachments: files, history });
+  const streamed = images.length > 0 || attachments.length > 0;
   const bin = findClaude();
   if (!bin) return Promise.reject(Object.assign(new Error('Claude CLI not found. Install it (npm i -g @anthropic-ai/claude-code), run `claude` once to sign in, or set CLAUDE_BIN.'), { status: 503 }));
   emptyDir ||= mkdtempSync(join(tmpdir(), 'lh-claude-'));
-  const args = ['-p', '--output-format', images.length ? 'stream-json' : 'json', '--tools', search ? 'WebSearch' : '', '--system-prompt', system || DEFAULT_SYSTEM,
+  const args = ['-p', '--output-format', streamed ? 'stream-json' : 'json', '--tools', search ? 'WebSearch' : '', '--system-prompt', system || DEFAULT_SYSTEM,
     '--setting-sources', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     '--disable-slash-commands', '--no-session-persistence'];
   if (search) args.push('--allowedTools', 'WebSearch');
@@ -55,11 +58,11 @@ export function runClaude({ model, prompt, system, images = [], effort, signal, 
   if (['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) args.push('--effort', effort);
   // With pictures the prompt goes in as a stream-json user message (text + image blocks); otherwise plain stdin.
   let stdin = prompt;
-  if (images.length) {
+  if (streamed) {
     args.push('--input-format', 'stream-json', '--verbose');
     stdin = JSON.stringify({
       type: 'user',
-      message: { role: 'user', content: [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.mime || 'image/png', data: im.b64 } })), { type: 'text', text: prompt }] }
+      message: { role: 'user', content: [...attachments.map((a) => ({ type: 'document', title: a.name, source: { type: 'text', media_type: 'text/plain', data: a.text } })), ...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.mime || 'image/png', data: im.b64 } })), { type: 'text', text: prompt }] }
     }) + '\n';
   }
   const env = { ...process.env };
@@ -74,7 +77,7 @@ export function runClaude({ model, prompt, system, images = [], effort, signal, 
     signal?.addEventListener('abort', kill, { once: true });
     child.on('close', (code) => {
       let r = null;
-      if (images.length) { // stream-json: several lines, the last "result" one holds the answer
+      if (streamed) { // stream-json: several lines, the last "result" one holds the answer
         for (const line of out.split('\n')) { try { const j = JSON.parse(line); if (j.type === 'result') r = j; } catch { /* not json */ } }
       } else { try { r = JSON.parse(out); } catch { /* handled below */ } }
       if (!r) return reject(Object.assign(new Error(`Claude CLI failed (exit ${code}): ${(err || out).trim().slice(0, 400) || 'no output'}`), { status: 502 }));

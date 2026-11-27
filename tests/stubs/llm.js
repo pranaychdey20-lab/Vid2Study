@@ -27,10 +27,10 @@ export const failures = [];
 
 export async function generate(p, model, o) {
   const task = /\[TASK:(\w+)\]/.exec(o.prompt)[1];
-  calls.push({ model, task, prompt: o.prompt, maxTokens: o.maxTokens, images: o.images?.length || 0, labels: (o.images || []).map((i) => i.label), session: o.session, search: o.search });
+  calls.push({ model, task, prompt: o.prompt, attachments: o.attachments || [], history: o.history || [], all: o.prompt + '\n' + (o.attachments || []).map((a) => a.text).join('\n'), attached: (o.attachments || []).map((a) => a.text).join('\n\n'), maxTokens: o.maxTokens, images: o.images?.length || 0, labels: (o.images || []).map((i) => i.label), session: o.session, search: o.search });
   if (o.singleRequest) Object.assign(calls.at(-1), { singleRequest: true, notesHtml: o.notesHtml });
   const f = failures.find((x) => (!x.model || x.model === model) && (!x.task || x.task === task));
-  if (f?.reply) return { text: f.reply, session: f.session, usage: { in: 1, out: 1 } };
+  if (f?.reply) return { text: f.reply, session: f.session, truncated: f.truncated, usage: { in: 1, out: 1 } };
   if (f) throw Object.assign(new Error(f.message || `Not found (404): The model \`${model}\` does not exist.`), 'status' in f ? { status: f.status } : {});
   if (task === 'SCREEN' || task === 'DESCRIBE') {
     // a fake vision model: SCREEN keeps every 3rd frame (the others are "dup"), DESCRIBE ranks by id and describes
@@ -42,7 +42,7 @@ export async function generate(p, model, o) {
     return { text: JSON.stringify({ frames: ids.map((n) => ({ id: 'F' + n, keep: true, kind: /video "QUOTE/.test(o.prompt) && n === ids[0] ? 'quote' : 'illustration', info: Math.min(10, 1 + (n % 10)), caption: 'cap ' + n, text: /video "QUOTE/.test(o.prompt) && n === ids[0] ? 'Forget not the tyranny of this wall ... nor the love of freedom that made it fall ...\n- Unknown, Graffiti on the Berlin Wall' : '', detail: 'detail of ' + n })) }), usage: { in: 2000, out: 500 } };
   }
   if (task === 'DIGEST') {
-    const lines = o.prompt.split('\n\n').pop();
+    const lines = (o.attachments?.[0]?.text || o.prompt).split('\n\n').pop();
     const type = o.prompt.includes('=== TYPE ===') ? '\n=== TYPE ===\n{"technical": false, "kind": "religion", "subject": "hindu gods"}' : '';
     const refs = '\n=== REFERENCES ===\n[{"kind":"document","title":"Basic Treaty of 1972","author":"FRG and GDR","at":"00:40","why":"West Germany recognised East Germany"},{"kind":"book","title":"The Berlin Wall: A World Divided","author":"Frederick Taylor","at":"01:00","why":"cited for the building of the wall"}]';
     return { text: '=== BRIEF ===\nBRIEF-LINE about gods\n=== TIMELINE ===\n' + lines.replace(/story goes on and on/g, 'SUMMARY-LINE') + refs + type, usage: { in: 100, out: 100 } };

@@ -207,8 +207,8 @@ async function attach(page, images, notesPdf) {
   const files = images.map((im, i) => {
     const buf = Buffer.from(im.b64, 'base64');
     if (buf.length > MAX_FILE_BYTES) throw new Error('picture too large');
-    const ext = /jpe?g/.test(im.mime || '') ? 'jpg' : /webp/.test(im.mime || '') ? 'webp' : 'png';
-    return { name: `image-${i + 1}.${ext}`, mimeType: im.mime || 'image/png', buffer: buf };
+    const ext = /jpe?g/.test(im.mime || '') ? 'jpg' : /webp/.test(im.mime || '') ? 'webp' : /text/.test(im.mime || '') ? 'txt' : 'png';
+    return { name: im.name || `image-${i + 1}.${ext}`, mimeType: im.mime || 'image/png', buffer: buf };
   });
   if (notesPdf) files.unshift(notesPdf);
   const plus = page.getByRole('button', { name: /upload|add files|open upload|attach|^\+$/i }).first();

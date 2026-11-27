@@ -51,7 +51,7 @@ const { runLocalPipeline } = lp;
 for (const webSearch of [false, true]) {
   const r = await run(`rf-${webSearch}`, 'REFS test', normalizeSettings({ ...base, webSearch }));
   assert.equal(calls.find(c => c.task === 'DIGEST')?.model, 'small');
-  assert.match(calls.find(c => c.task === 'WRITE').prompt, /SOURCES FOUND IN THIS VIDEO[\s\S]*Basic Treaty of 1972/);
+  assert.match(calls.find(c => c.task === 'WRITE').all, /SOURCES FOUND IN THIS VIDEO[\s\S]*Basic Treaty of 1972/);
   assert.ok(!calls.some(c => c.task === 'REFERENCES'));
   assert.match(r.summary_markdown, /## References[\s\S]*Basic Treaty of 1972\*\* — FRG and GDR \(at 00:40\): West Germany recognised East Germany/);
   assert.match(r.summary_markdown, /The Berlin Wall: A World Divided\*\* — Frederick Taylor \(at 01:00\): cited for the building of the wall/);

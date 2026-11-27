@@ -159,16 +159,16 @@ function split(id) {
   return m ? [m[1].toLowerCase(), (m[2] || '').toLowerCase()] : ['auto', ''];
 }
 
-const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'text/plain': 'txt' };
 const PUSH = 'https://push.clients6.google.com/upload/';
 
 /**
  * Upload one picture with Google's resumable upload (two POSTs: start, then upload+finalize).
  * Resolves to { id, name }: the id looks like "/contrib_service/ttl_1d/..." and goes into the chat request.
  */
-async function uploadImage({ b64, mime = 'image/png' }, i, cookie, signal) {
+async function uploadImage({ b64, mime = 'image/png', name: given }, i, cookie, signal) {
   const bytes = Buffer.from(b64, 'base64');
-  const name = `image-${i + 1}.${EXT[mime] || 'png'}`;
+  const name = given || `image-${i + 1}.${EXT[mime] || 'png'}`;
   const common = { cookie, origin: BASE, referer: `${BASE}/`, 'user-agent': UA, 'push-id': 'feeds/mcudyrk2a4khkz', 'x-tenant-id': 'bard-storage' };
   const start = await fetch(PUSH, {
     method: 'POST', signal,

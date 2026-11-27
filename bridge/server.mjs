@@ -132,7 +132,7 @@ const server = createServer(async (req, res) => {
         res.end(buffer);
         return;
       }
-      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], model: j.model, session: j.session, signal: ac.signal, search: j.search === true && !j.json };
+      const o = { prompt: withJson(String(j.prompt || ''), j.json), system: j.system, images: Array.isArray(j.images) ? j.images : [], attachments: Array.isArray(j.attachments) ? j.attachments.filter(a => a && typeof a.text === 'string' && typeof a.name === 'string') : [], history: Array.isArray(j.history) ? j.history : [], model: j.model, session: j.session, signal: ac.signal, search: j.search === true && !j.json };
       let out;
       if (j.backend === 'claude-cli') {
         const done = await claudeSlot();
@@ -145,6 +145,8 @@ const server = createServer(async (req, res) => {
         const onProgress = message => { if (id) geminiProgress.set(id, { message }); };
         const deadline = setTimeout(() => ac.abort(), 30 * 60000);
         o.onProgress = onProgress;
+        // Gemini web takes files, not message parts: a text attachment is uploaded like a picture (it counts toward the 10-file limit)
+        o.images = [...o.images, ...o.attachments.map(a => ({ b64: Buffer.from(a.text, 'utf8').toString('base64'), mime: 'text/plain', name: a.name.replace(/[^\w. -]/g, '').slice(0, 60) || 'notes.txt' }))];
         try {
           if (!parseModel(o.model)) throw Object.assign(new Error('Unknown Gemini web model.'), { status: 400 });
           const notesHtml = typeof j.notesHtml === 'string' && j.notesHtml;

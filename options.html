@@ -214,6 +214,8 @@
     <label for="writerImages">Pictures sent to the Strong AI with the notes request (0 = none)</label>
     <input id="writerImages" type="number" min="0" max="20" step="1">
     <div class="hint">The most informative frames (diagrams, code, tables, formulas first) go to the writer as images, so it explains what it actually sees. Each picture costs about 1-2 k input tokens on paid APIs; free with Gemini web (10 at most) or the Claude CLI. A model without vision just gets the text descriptions.</div>
+    <label class="check"><input id="attachData" type="checkbox"> Send the transcript and slide text to the AI as file attachments</label>
+    <div class="hint">Only the instructions go in the chat message; the transcript, on-screen text and frame descriptions travel as .txt files (Claude, Gemini, Gemini web and Claude CLI take real files; other services get the same file as one labelled block). A reply that hits the output limit is continued in the same conversation and the parts are joined.</div>
     <label class="check"><input id="researchReferences" type="checkbox"> Include a References section for lecture sources and quotes</label>
     <div class="hint">Every book, paper, film, person cited as a source or website that is mentioned (said or shown on screen) is noted where it comes up, and listed in the References section from the lecture evidence. On-screen quotes always get their own callout.</div>
     <label for="practiceProv">Practice Paper AI</label>

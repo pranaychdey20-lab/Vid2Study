@@ -58,11 +58,12 @@ await lp.runLocalPipeline({ mode: 'video', key: 'dv1', title: 'Gods', course: 'C
 const screens = calls.filter((c) => c.task === 'SCREEN'), described = calls.filter((c) => c.task === 'DESCRIBE');
 assert.equal(screens.length, 1, 'all 60 frames in ONE screening call');
 assert.equal(described.length, 1, '20 survivors = one describe call');
-assert.ok(/\[00:00\] the SUMMARY-LINE/.test(described[0].prompt) && /Image 1 = F1 at 00:00/.test(described[0].prompt), 'the describe call has the Transcript AI timeline and timed images');
+assert.ok(/\[00:00\] the SUMMARY-LINE/.test(described[0].all) && /Image 1 = F1 at 00:00/.test(described[0].prompt), 'the describe call has the Transcript AI timeline and timed images');
 assert.ok(calls.some((c) => c.task === 'DIGEST' && c.model === 'small'), 'the Transcript AI is always used (the Cheap AI when its own slot is empty)');
 assert.ok(!calls.some((c) => c.task === 'SELECT'), 'no per-batch judge calls');
 const w = calls.find((c) => c.task === 'WRITE');
-assert.ok(/detail of 1\b|cap 1\b/.test(w.prompt), 'the described frames reach the writer');
+assert.ok(/detail of 1\b|cap 1\b/.test(w.all), 'the described frames reach the writer (in the evidence file)');
+assert.ok(w.attachments.length === 1 && w.attachments[0].name === 'lecture-evidence.txt' && !/detail of 1\b/.test(w.prompt), 'the evidence is a file, the rules are the message');
 assert.equal(await getFrame('dv1/scene_2.png'), null, 'a rejected frame has its full-size copy deleted');
 const r = await getResult('dv1');
 assert.ok(r.debug.includes('SCREEN') && r.debug.includes('DESCRIBE'));
@@ -104,9 +105,9 @@ console.log('two-call vision flow ok:', calls.map((c) => c.task).join(','));
   assert.ok(order.indexOf('DIGEST') >= 0 && order.indexOf('DIGEST') < order.indexOf('SCREEN'), 'the summary AI runs before the screening call');
   assert.ok(calls.filter((c) => c.task === 'DIGEST').every((c) => c.model === 'DIGESTM'));
   assert.ok(/BRIEF-LINE/.test(calls.find((c) => c.task === 'SCREEN').prompt), 'the brief goes to the screening call');
-  const d = calls.find((c) => c.task === 'DESCRIBE').prompt;
+  const d = calls.find((c) => c.task === 'DESCRIBE').all;
   assert.ok(/SUMMARY-LINE/.test(d.slice(d.indexOf('TRANSCRIPT'))) && !/story goes on/.test(d), 'the timeline goes to the describing call');
-  const w = calls.find((c) => c.task === 'WRITE').prompt;
+  const w = calls.find((c) => c.task === 'WRITE').all;
   assert.ok(/story goes on/.test(w) && !/SUMMARY-LINE/.test(w), 'the writer reads the raw trimmed transcript');
   console.log('summary AI before screening ok');
 }
