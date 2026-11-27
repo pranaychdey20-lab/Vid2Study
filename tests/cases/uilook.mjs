@@ -94,3 +94,11 @@ assert.equal(cleanSvg('<svg width="900" height="900" viewBox="0 0 10 10"><rect x
 assert.match(LOOK_GUIDE, /\[TASK:UI_LOOK\]/);
 assert.ok(LOOK_GUIDE.length < 4500, 'the look instructions stay small');
 console.log('uilook ok');
+
+// an animation-only look must not recolour the page (the contents links turned yellow once)
+{
+  const only = lookCss(mergeLook({}, sanitizeLook({ animate: [{ target: 'orb', name: 'spin', when: 'hover', seconds: 2 }] }).patch));
+  assert.ok(!only.includes('--y'), 'no colour tokens');
+  assert.ok(!only.includes('#out a'), 'links untouched');
+  assert.ok(!only.includes('background:var(--w)'), 'page colours untouched');
+}
