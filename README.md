@@ -11,7 +11,7 @@
 ![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![No build](https://img.shields.io/badge/build%20step-none-111111?style=for-the-badge)
 ![Local first](https://img.shields.io/badge/transcript%20·%20OCR%20·%20slides-run%20locally-2ea44f?style=for-the-badge)
-![Tests](https://img.shields.io/badge/npm%20test-22%20suites-brightgreen?style=for-the-badge)
+![Tests](https://img.shields.io/badge/npm%20test-33%20suites-brightgreen?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-MIT-yellow?style=for-the-badge)
 ![Providers](https://img.shields.io/badge/AI-Gemini%20·%20OpenAI--compatible%20·%20Anthropic%20·%20Codex%20CLI%20·%20Claude%20CLI-8A2BE2?style=for-the-badge)
 
@@ -36,7 +36,11 @@ Turn a lecture into study notes with plain-English explanations, typeset equatio
 | 🧠 **Practice questions that fit** | Pick a dedicated **Practice Paper AI** for lecture-grounded questions and worked answers with references back to the notes. |
 | 📦 **Bulk notes** | On a university LMS course page, tick a whole week (or "Without notes") and queue every lecture at once. |
 | 🛟 **Never loses your work** | Everything is saved as it goes. If a model fails the job **pauses**, you pick another model, and it resumes from where it stopped. |
-| 🖨 **Takes it with you** | Copy notes, save a PDF with clickable contents and practice-answer references, or save interactive HTML as a standalone file or in a searchable offline library. |
+| 🔮 **The orb: ask or edit** | A small glowing orb opens an assistant that knows the **whole lecture**. **Ask** questions with clickable section citations, or switch to **Edit notes** and describe a change: it proposes edits you read, preview and approve one by one, with undo and redo. |
+| 🧪 **Interactive examples, almost free** | Where the lecture lacks a clear example, the AI sends a *type and a few parameters* (about 25 tokens). Vid2Study already knows how to draw ~45 kinds: charts, matrices, vectors, circuits, sliders, quizzes. No generated code ever runs. |
+| 🎨 **Restyle it with a sentence** | Choose **UI changes** in the assistant and say *"dark mode, serif font, make the orb spin when I hover it"*. Colours, type, layout, the orb icon and animations all change. You try it first, then keep or revert. |
+| ✏️ **Edit by hand too** | **Edit notes** lets you rewrite any section and move or remove figures for alignment, with the same undo and redo. |
+| 🖨 **Takes it with you** | Copy notes, save a PDF with clickable contents and practice-answer references, or save interactive HTML as a standalone file or in a searchable offline library: one master page, subject covers, a search box and a sandboxed reader. |
 
 ---
 
@@ -74,7 +78,7 @@ flowchart LR
 5. **Deduplication.** The extension checks both the picture and OCR before merging slides that share text. Distinct captures keep their evidence through the writing stage.
 6. **Transcript AI.** The model reads the transcript and sampled frames to build a brief, a timeline, a coverage checklist and the source list.
 7. **Vision review.** With Vision AI enabled, all distinct, nonblank captures reach review in batches. The first pass ranks them. The detailed pass preserves their teaching content and identifies whether a screenshot adds information beyond text, math, code or a table.
-8. **Write.** The Strong AI gets OCR and visual descriptions along with the transcript or chunk notes. The highest-ranked pictures are attached within the provider’s image limits. The extension checks for empty sections and uncovered items, puts figures within their relevant topic and source video, and omits a screenshot when the writer and vision review agree its content is reproduced in the notes.
+8. **Write.** The data goes in as a **`.txt` attachment** (transcript, OCR, frame descriptions, sources) and only the rules travel as chat text. The Strong AI gets OCR and visual descriptions along with the transcript or chunk notes. If a reply is cut at the output limit, it is **continued in the same conversation** without resending anything, then stitched together. The notes come back as one Markdown file. The highest-ranked pictures are attached within the provider’s image limits. The extension checks for empty sections and uncovered items, puts figures within their relevant topic and source video, and omits a screenshot when the writer and vision review agree its content is reproduced in the notes.
 9. **Finish.** The Cheap AI can polish equations, the overview, and code outputs. The extension assembles the references and figures, adds practice questions if enabled, and records which model actually wrote each part after any fallback.
 
 </details>
@@ -161,14 +165,35 @@ The bridge listens on localhost. Keep `bridge/token.txt`, the browser profiles, 
 - **📚 Lectures drawer (university LMS).** Open a course page and click **LECTURES**. Every lecture is grouped by module and chapter. Tick a **whole week** with one click, or press **Without notes** to select everything not yet summarised, then **Summarize selected (N)**. They run one after another; a failure never stops the rest, and the queue survives a restart.
 - **From a file.** *Options → Summarize from a file…* takes a video or audio file (and an optional `.vtt`/`.srt`).
 - **YouTube.** The transcript is found without listening whenever possible (the page's player, then `yt-dlp`). Figures come from the video itself, and link back with "Watch at".
-- **Results page.** **Preview** opens a full reader with larger equations, interactive examples and an assistant that uses your configured providers. The assistant can propose an addition to a selected section for you to review, edit and save. Undo and redo are available during that preview session.
-- **Save as HTML.** Save one self-contained lecture or choose a folder for the local library. Open **Vid2Study.html** in that folder to browse it. Equations, saved lecture images and supported visual examples work offline. The assistant runs from the extension preview.
-- **Save as PDF.** The local bridge creates the PDF and the browser asks where to save it. Interactive examples print at their saved defaults. You can also use Ctrl+P from Preview.
-- **Visual examples.** Notes use validated component data for pixel grids, histograms, brightness and contrast, gamma correction, one-dimensional Laplacian sharpening, and matrix comparisons. The renderer supplies the controls and calculations. Model-generated scripts are never run.
+- **Results page.** The notes open with the toolbar on top and the **orb** in the corner. There is no separate preview step: it is the same page, so equations, interactive examples and the assistant are all there already. Click the orb to **Ask** (answers cite sections as links) or **Edit notes** (proposed edits you approve one by one; undo and redo; your hand edits and the assistant's share one history). Pick how much of the lecture it reads: **Smart context** (the outline plus only the sections it needs, the default), **Section in view**, **Whole lecture**, or **UI changes**. The panel docks beside the notes or floats; drag it, resize it, close it.
+- **Edit notes (by hand).** The toolbar's **Edit notes** button turns every section into editable text and puts **↑ ↓ Remove** on each figure, so you can fix wording and move frames until they sit where they should.
+- **Save as HTML.** Save one self-contained lecture or choose a folder for the local library. Open **Vid2Study.html** in that folder to browse it. In a library, every lecture shares **one** copy of the visual code (`.vid2study/visuals.js`) instead of carrying its own, so 50 lectures cost about 100 KB, not 5 MB. Equations, saved lecture images and visual examples work offline. The assistant runs from the extension page.
+- **Save as PDF.** The local bridge creates the PDF and the browser asks where to save it. Interactive examples print at their saved defaults. You can also use Ctrl+P from the results page.
+- **Visual examples.** The writer and the assistant describe an example as a *type plus parameters* and the renderer does the rest: validation, the maths, the SVG and the sliders. About 45 types cover pixel grids and histograms, brightness / gamma / convolution / filters, matrices and kernels, function and surface plots, vectors and free-body diagrams, robot arms, circuits and control blocks, statistics (bar, line, scatter, box, distributions), flowcharts, timelines, comparisons, steppers and quizzes. A slide frame is skipped only when a visual redraws it and the frame holds no photo, handwriting or scene the code could not draw. Model-generated scripts are never run.
 - **Practice questions.** Generate a practice paper from the finished notes, with optional assignment text or screenshots. The paper includes worked solutions for matching assignment questions. Generating again adds a new paper to the saved notes.
-- **Fix formatting.** Repair common Markdown and LaTeX problems in saved notes. If local repair leaves items for review, you can choose whether to send them to the Cheap AI.
+- **Fix formatting.** Repair common Markdown and LaTeX problems in saved notes: formulas stuck in code spans, bracket formulas in the middle of a sentence, double-escaped commands, broken `$…$` pairs, and more. A formula that starts with a digit, like `$1/(MN)$`, now renders as maths instead of being read as a price. If local repair leaves items for review, you can choose whether to send them to the Cheap AI.
 - **Activity log.** Use **Show logs** in the toolbar menu. Running jobs show their latest log line and step progress in the Lectures list, including combined summaries.
 - **Storage cleanup.** In **Saved notes**, **Clear processing files** clears activity logs, debug dumps, transcripts, drafts, and unused frames. Check **Also remove figures from saved notes** to remove embedded figures as well. Finished note text and files you previously downloaded are kept.
+
+---
+
+## 🎨 Make it yours: UI changes
+
+Open the orb, switch the dropdown to **UI changes**, and describe the look. It sends only your sentence and your current look (never the notes), so it is cheap. The reply is a small piece of data, **not code**: Vid2Study checks every field against closed lists, shows you the result as a **trial**, and keeps it only when you press **Keep this look**. Nothing touches the backend, your notes or your saved lectures.
+
+| You can change | Examples |
+|---|---|
+| 🌗 **Mode** | light, dark, or follow the system |
+| 🎨 **Colours** | accent, page, text, lines, code and table background, toolbar |
+| 🔤 **Type** | serif, sans, rounded, slab, handwriting… plus size and line height |
+| 📐 **Layout** | reading width, corner roundness, spacing, heading style (bar, underline, side line, boxed) |
+| 🔮 **The orb** | a preset (dragon ball, star, spark, bolt, flame, heart, bulb, planet, book, atom), **any emoji**, or a drawing the AI makes itself; size, glow colour, which corner |
+| ✨ **Motion** | spin, pulse, bounce, float, wiggle, shake, tilt, beat, fade, rise, slide, glow, shimmer, flip, swing: on hover, always, or once on load |
+| 🧩 **Any part** | headings, figures, tables, code, quotes, formulas, links, toolbar, buttons, the assistant panel, with their hover states |
+
+Ideas to try: *"make the orb spin when I hover it"* · *"a glowing owl orb in the bottom left"* · *"calm dark mode, serif text, headings with a coloured side line"* · *"figures lift and get a shadow on hover"* · *"reset the look"*.
+
+🔒 **Why it is safe:** colours must be hex, values may not contain `url()`, braces or quotes, drawings are rebuilt from a whitelist of shapes (no text, images, links, scripts or styles), and motion respects your system's reduced-motion setting. Saved looks are checked again every time they load.
 
 ---
 
@@ -223,6 +248,7 @@ Vid2Study/
 ├─ offscreen.js             hidden worker page that runs a job
 ├─ content.js + adapters/   the floating UI and per-site code (university LMS, YouTube, generic)
 ├─ options.* · results.*    settings and the notes viewer / export
+├─ assistant.css            the orb and the assistant panel
 ├─ pager.html               isolated print renderer
 ├─ lib/
 │  ├─ local-pipeline.js     ⭐ the main pipeline (resumable, pauses on model failure)
@@ -232,6 +258,12 @@ Vid2Study/
 │  ├─ asr.js · stt.js       Whisper in the browser, cloud speech-to-text
 │  ├─ llm.js                Gemini / OpenAI-compatible / Anthropic / bridge providers
 │  ├─ algoviz.js            runs real algorithms and draws every step
+│  ├─ textbook-visuals.js   ~45 interactive example types from small parameter blocks
+│  ├─ textbook-assistant.js the orb: ask, edit notes, UI changes
+│  ├─ ui-theme.js           validated look patches → CSS (colours, type, orb, motion)
+│  ├─ notes-edit.js · notes-store.js · notes-editor.js   edit scripts, undo / redo, hand editing
+│  ├─ md-parts.js           continues and stitches cut-off replies
+│  ├─ library-page.js       the master Vid2Study.html
 │  └─ vendor/               Whisper (transformers.js), ONNX runtime, Tesseract, KaTeX
 ├─ bridge/                  Codex CLI, Claude CLI, Gemini web, and yt-dlp
 └─ tests/                   `npm test`: pure logic + the pipeline with a fake AI
