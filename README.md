@@ -169,6 +169,7 @@ The bridge listens on localhost. Keep `bridge/token.txt`, the browser profiles, 
 - **Quote in assistant.** Select any text in the notes, a sentence, a bullet, a formula, and a **Quote in assistant** button pops up beside it, just like replying to a selection in Claude. Click it and the quote lands above the text box with its section label; add up to three. The assistant gets your exact words plus that section in full, so you never retype a passage, and in **Edit notes** it changes the paragraph you quoted.
 - **Edit notes (by hand).** The toolbar's **Edit notes** button turns every section into editable text and puts **↑ ↓ Remove** on each figure, so you can fix wording and move frames until they sit where they should.
 - **Save as HTML.** Save one self-contained lecture or choose a folder for the local library. Open **Vid2Study.html** in that folder to browse it. In a library, every lecture shares **one** copy of the visual code (`.vid2study/visuals.js`) instead of carrying its own, so 50 lectures cost about 100 KB, not 5 MB. Equations, saved lecture images and visual examples work offline. The assistant runs from the extension page.
+- **The library, with the assistant.** Click **Library** in the toolbar pop-up (or **Open library with the assistant** in the Save as HTML box), pick your library folder once, and your shelf opens inside Vid2Study. Read any lecture there with the **same orb**: Ask, Edit notes, Quote, UI changes, with the same API, CLI and Gemini web models from Options. Approved edits are written back to the lecture's file in the folder a few seconds later. A double-clicked `Vid2Study.html` stays a plain offline reader (a file on disk cannot see your keys or reach the bridge) and carries an **Assistant** button that opens this page. **Saved notes** and the **library** are separate on purpose: a lecture shows up on the shelf only after you add it with Save as HTML.
 - **Save as PDF.** The local bridge creates the PDF and the browser asks where to save it. Interactive examples print at their saved defaults. You can also use Ctrl+P from the results page.
 - **Visual examples.** The writer and the assistant describe an example as a *type plus parameters* and the renderer does the rest: validation, the maths, the SVG and the sliders. About 45 types cover pixel grids and histograms, brightness / gamma / convolution / filters, matrices and kernels, function and surface plots, vectors and free-body diagrams, robot arms, circuits and control blocks, statistics (bar, line, scatter, box, distributions), flowcharts, timelines, comparisons, steppers and quizzes. A slide frame is skipped only when a visual redraws it and the frame holds no photo, handwriting or scene the code could not draw. Model-generated scripts are never run.
 - **Practice questions.** Generate a practice paper from the finished notes, with optional assignment text or screenshots. The paper includes worked solutions for matching assignment questions. Generating again adds a new paper to the saved notes.
@@ -250,6 +251,7 @@ Vid2Study/
 ├─ content.js + adapters/   the floating UI and per-site code (university LMS, YouTube, generic)
 ├─ options.* · results.*    settings and the notes viewer / export
 ├─ assistant.css            the orb and the assistant panel
+├─ library-open.*           the library inside the extension, with the assistant
 ├─ pager.html               isolated print renderer
 ├─ lib/
 │  ├─ local-pipeline.js     ⭐ the main pipeline (resumable, pauses on model failure)
@@ -264,7 +266,11 @@ Vid2Study/
 │  ├─ ui-theme.js           validated look patches → CSS (colours, type, orb, motion)
 │  ├─ notes-edit.js · notes-store.js · notes-editor.js   edit scripts, undo / redo, hand editing
 │  ├─ md-parts.js           continues and stitches cut-off replies
-│  ├─ library-page.js       the master Vid2Study.html
+│  ├─ library-page.js       the master Vid2Study.html (markup + styles)
+│  ├─ library-ui.js         the shelf script: ONE copy, used by the folder and by the extension
+│  ├─ notes-view.js         opens a lecture, draws it, attaches editor + assistant: shared by results and library
+│  ├─ standalone-html.js    one lecture as a self-contained page (save, PDF, keeping the library file in step)
+│  ├─ library-handle.js     remembers your library folder
 │  └─ vendor/               Whisper (transformers.js), ONNX runtime, Tesseract, KaTeX
 ├─ bridge/                  Codex CLI, Claude CLI, Gemini web, and yt-dlp
 └─ tests/                   `npm test`: pure logic + the pipeline with a fake AI
