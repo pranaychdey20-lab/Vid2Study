@@ -32,6 +32,24 @@ renderMarkdown(readable, { math: tex => { seenMath.push(tex); return '<span>math
 assert.deepEqual(seenMath, ['40, 120, 230', '\\alpha=1,\\ \\beta=30']);
 assert.match(renderMarkdown('Budget $40,120 and $30.', { math: () => assert.fail('Currency should remain text') }), /\$40,120/);
 
+// a digit-led formula is maths, not a price: "$1/(MN)$" (the 2D DFT notes)
+{
+  const seen = [];
+  const html = renderMarkdown('(and omitting the $1/(MN)$ factor used in the forward convention above) and $2\\pi$, $1/N$', { math: tex => { seen.push(tex); return '<i>m</i>'; } });
+  assert.deepEqual(seen, ['1/(MN)', '2\\pi', '1/N']);
+  assert.ok(!/\$1/.test(html));
+  const price = renderMarkdown('it costs $5 and then $6 more', { math: () => assert.fail('price') });
+  assert.match(price, /\$5 and then \$6/);
+}
+// more broken shapes the repair can fix without the AI
+{
+  const fix = md => repairFormatting(md, valid);
+  assert.equal(fix('so \x60$x^2+1$\x60 holds').markdown, 'so $x^2+1$ holds');
+  assert.equal(fix('so \\[x^2+1\\] holds').markdown, 'so $x^2+1$ holds');
+  assert.equal(fix('so $\\\\frac{1}{2}$ holds').markdown, 'so $\\frac{1}{2}$ holds');
+  assert.equal(fix('plain text, $\\frac{1}{2}$ stays').repairs, 0);
+}
+
 const settings = normalizeSettings({
   providers: [{ id: 'p', type: 'openai' }],
   cheap: { provider: 'p', model: 'weak' },
