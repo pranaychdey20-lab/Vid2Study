@@ -8,22 +8,26 @@
 <link rel="stylesheet" href="assistant.css">
 <style>
   /* the screen before a library folder is open; the shelf itself brings its own styles (lib/library-page.js) */
-  body { margin: 0; font: 15px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; background: #eef2f0; color: #14232b; }
-  #gate { max-width: 34rem; margin: 12vh auto; padding: 0 1.4rem; }
-  #gate h1 { margin: 0 0 .4rem; font: 600 2rem/1.15 "Iowan Old Style", Palatino, Georgia, serif; }
-  #gate p { color: #5b6d75; margin: .3rem 0 1rem; }
-  #gate button { margin: 0 .5rem .5rem 0; padding: .6rem 1.1rem; border: 1px solid #0e6a64; border-radius: 10px; background: #fff; color: #0e6a64; font: inherit; font-weight: 600; cursor: pointer; }
-  #gate button.primary { background: #0e6a64; color: #fff; }
+  body { margin: 0; min-height: 100vh; font: 15px/1.55 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: #f5f5f7;
+    background: radial-gradient(900px 600px at 90% 0%, rgba(222,128,62,.5), transparent 60%), radial-gradient(700px 500px at 0% 100%, rgba(150,70,34,.45), transparent 60%), #150f0c; }
+  #gate { max-width: 36rem; margin: 14vh auto; padding: 2rem 2rem 1.6rem; border: 1px solid rgba(255,255,255,.09); border-radius: 20px; background: rgba(18,18,21,.86); backdrop-filter: blur(10px); box-shadow: 0 40px 80px -30px rgba(0,0,0,.7); animation: rise .7s cubic-bezier(.22,.8,.24,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
+  #gate h1 { margin: 0 0 .5rem; font: 700 2.2rem/1.1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; letter-spacing: -.02em; }
+  #gate p { color: #b9b9c4; margin: .3rem 0 1.2rem; }
+  #gate button { margin: 0 .5rem .5rem 0; padding: .65rem 1.2rem; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; background: #1f1f25; color: #f5f5f7; font: inherit; font-weight: 600; cursor: pointer; transition: transform .25s, box-shadow .25s; }
+  #gate button:hover { transform: translateY(-2px); box-shadow: 0 14px 28px -14px rgba(255,138,43,.6); }
+  #gate button.primary { border-color: transparent; background: linear-gradient(135deg, #ffab57, #f2701a); color: #1b0f05; }
   #gate button[hidden] { display: none; }
-  #gate .msg { min-height: 1.4em; color: #b13f2d; }
+  #gate .msg { min-height: 1.4em; margin-bottom: 0; color: #ff8a7a; }
 </style>
 </head>
 <body>
   <main id="gate">
     <h1>Your library</h1>
-    <p>Open the folder that holds your saved lectures to read them here with the notes assistant, using the same models and providers as Vid2Study. Lectures appear only after you add them to the library with Save as HTML.</p>
+    <p>Open the folder that holds your saved lectures to read them here with the notes assistant, using the same models and providers as Vid2Study. Lectures join the library only after you add them with Save as HTML. Your saved notes are here too, in their own section.</p>
     <button class="primary" id="reopen" type="button" hidden>Open the library</button>
     <button id="choose" type="button">Choose a library folder</button>
+    <button id="notesOnly" type="button">Saved notes only</button>
     <p class="msg" id="msg" role="status"></p>
   </main>
   <script src="lib/katex/katex.min.js"></script>
