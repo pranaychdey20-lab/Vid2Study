@@ -14,6 +14,12 @@
   .meta { font-family: var(--mono); font-size: 11px; padding: 10px 20px 0; color: #444; max-width: 760px; margin: 0 auto; }
   .status { padding: 24px 20px; font-family: var(--mono); font-size: 12px; }
   article { max-width: 760px; margin: 0 auto; padding: 4px 20px 56px; overflow-wrap: anywhere; }
+  .wide-preview > article, .wide-preview > .meta { max-width: 1080px; }
+  @media print {
+    .bar2, .toast, .meta { display: none; }
+    body > article, body > article > article { width: auto; max-width: none; margin: 0; padding: 0; }
+    body article table { display: table; width: 100%; }
+  }
   h1 { font-size: 26px; font-weight: 800; line-height: 1.2; margin: 18px 0 10px; }
   h2 { font-size: 18px; font-weight: 800; margin: 32px 0 10px; padding-top: 10px; border-top: 3px solid var(--k); text-transform: uppercase; letter-spacing: .03em; }
   h3 { font-size: 15px; font-weight: 800; margin: 20px 0 6px; }
@@ -23,8 +29,10 @@
   img + br + em { display: block; font-style: normal; font-family: var(--mono); font-size: 11px; border: 2px solid var(--k); border-top: 0; padding: 4px 8px; margin-bottom: 14px; background: var(--g1); }
   code { background: var(--g1); border: 1px solid var(--g2); padding: 0 4px; font-family: var(--mono); font-size: 12.5px; }
   pre { background: var(--g1); border: 2px solid var(--k); padding: 10px; overflow: auto; } pre code { border: 0; padding: 0; background: none; }
-  .math { font-family: var(--mono); font-size: 12.5px; } div.math { background: var(--g1); border: 1px solid var(--k); padding: 8px; white-space: pre-wrap; margin: 8px 0; }
+  .math { font-family: var(--mono); } .math .katex { font-size: 1.14em; } .katex-block .katex { font-size: 1.22em; }
+  div.math { background: var(--g1); border: 1px solid var(--k); padding: 8px; white-space: pre-wrap; margin: 8px 0; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; display: block; overflow-x: auto; }
+  .wide-preview table { display: table; table-layout: auto; }
   th, td { border: 1px solid var(--k); padding: 4px 8px; text-align: left; vertical-align: top; } th { background: var(--g1); font-weight: 800; }
   blockquote { margin: 10px 0; padding: 2px 12px; border-left: 4px solid var(--k); }
   .lightbox { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px; }
@@ -32,25 +40,82 @@
   .lightbox a { color: var(--w); margin-top: 10px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--k); color: var(--w); border: 2px solid var(--w); padding: 6px 12px; font: 700 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
-  #paperDialog { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 18px; border: 3px solid var(--k); }
-  #paperDialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 18px; border: 3px solid var(--k); }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
   #paperDialog label { display: block; margin: 8px 0; }
   #paperDialog textarea { display: block; width: 100%; min-height: 108px; }
   #paperDialog h2 { margin-top: 0; }
+  #openAssistant { position: fixed; z-index: 3; right: 18px; bottom: 18px; background: #fff; }
+  #notesAssistant { position: fixed; z-index: 4; right: 0; top: 0; width: min(420px, 100vw); height: 100dvh; min-width: min(320px, 100vw); max-width: 100vw; background: #fff; border: 2px solid #000; padding: 12px; overflow: auto; resize: horizontal; }
+  #notesAssistant[hidden], #assistantProposal[hidden] { display: none; }
+  #notesAssistant.assistant-floating { bottom: auto; top: 12vh; right: 18px; height: min(650px, 85dvh); max-height: 100dvh; resize: both; box-shadow: 0 12px 42px #0004; }
+  .assistant-head, .assistant-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .assistant-head strong { margin-right: auto; }
+  .assistant-floating #assistantDrag { cursor: move; touch-action: none; }
+  #assistantForm label, #assistantForm :is(select, input, textarea), #assistantProposal textarea { display: block; width: 100%; }
+  #assistantForm label { margin: .6rem 0 .2rem; }
+  #assistantHistory { overflow: auto; max-height: 36dvh; }
+  #assistantHistory p { padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f3f3; }
+  #assistantInput, #assistantEditText { min-height: 5rem; margin-bottom: 8px; }
+  #assistantProposal { margin-top: 10px; border-top: 1px solid #000; padding-top: 8px; }
+  @media (min-width: 850px) { .assistant-docked > :is(.bar2, #out, #meta) { margin-right: var(--assistant-width, 420px); } }
+  @media print { #openAssistant, #notesAssistant { display: none; } .assistant-docked > #out { margin-right: 0; } }
 </style>
 </head>
 <body>
   <div class="bar2">
     <button id="copy" title="Copy the text summary (figures become [Figure N] references)">Copy text</button>
     <button id="zip" title="summary.md + summary.html + images + frames.json">Bundle .zip</button>
-    <button id="print" title="Save the notes as a PDF">Print</button>
+    <button id="print">Save as PDF</button>
     <button id="preview" title="Open the full notes in a browser tab">Preview</button>
+    <button id="saveHtml">Save as HTML</button>
+    <button id="repair" type="button">Fix formatting</button>
     <button id="practice" hidden>Generate practice paper</button>
     <button id="debug" title="TEMP: full plain-text log of every step (transcript, frames, AI calls)" hidden>Debug dump</button>
   </div>
   <div class="meta" id="meta"></div>
   <div class="status" id="status">Loading...</div>
   <article id="out"></article>
+  <button id="openAssistant" type="button" aria-controls="notesAssistant" aria-expanded="false" hidden>Ask about these notes</button>
+  <aside id="notesAssistant" aria-label="Notes assistant" hidden>
+    <div class="assistant-head" id="assistantDrag">
+      <strong>Notes assistant</strong>
+      <button id="assistantMode" type="button">Float</button>
+      <button id="assistantClose" type="button">Close</button>
+    </div>
+    <form id="assistantForm">
+      <label for="assistantTopic">Lecture section</label>
+      <select id="assistantTopic"></select>
+      <label for="assistantProvider">Provider</label>
+      <select id="assistantProvider"></select>
+      <label for="assistantModel">Model</label>
+      <input id="assistantModel" list="assistantModels" required>
+      <datalist id="assistantModels"></datalist>
+      <div id="assistantHistory" role="log" aria-live="polite"></div>
+      <label for="assistantInput">Question or change</label>
+      <textarea id="assistantInput" maxlength="4000" required></textarea>
+      <div class="assistant-actions">
+        <button id="assistantSend" type="submit">Ask</button>
+        <button id="assistantPropose" type="submit">Propose addition</button>
+        <button id="assistantUndo" type="button" disabled>Undo</button>
+        <button id="assistantRedo" type="button" disabled>Redo</button>
+      </div>
+    </form>
+    <p id="assistantStatus" role="status"></p>
+    <div id="assistantProposal" hidden>
+      <label for="assistantEditText">Proposed addition</label>
+      <textarea id="assistantEditText" maxlength="4200"></textarea>
+      <button id="assistantApply" type="button">Save addition</button>
+      <button id="assistantDiscard" type="button">Discard</button>
+    </div>
+  </aside>
+  <dialog id="htmlDialog" aria-labelledby="htmlTitle">
+    <h2 id="htmlTitle">Save as HTML</h2>
+    <p id="htmlStatus" role="status" aria-live="polite"></p>
+    <button id="saveLibrary" type="button">Choose library folder</button>
+    <button id="saveStandalone" type="button">Save standalone HTML</button>
+    <form method="dialog"><button>Close</button></form>
+  </dialog>
   <dialog id="paperDialog" aria-labelledby="paperTitle">
     <h2 id="paperTitle">Generate practice paper</h2>
     <form id="paperForm">
@@ -66,6 +131,14 @@
       <div id="paperStatus" role="status" aria-live="polite"></div>
       <button type="submit" id="paperSubmit">Generate</button>
       <button type="button" id="paperCancel">Not now</button>
+    </form>
+  </dialog>
+  <dialog id="repairDialog" aria-labelledby="repairTitle">
+    <h2 id="repairTitle">Use Cheap AI to check formatting?</h2>
+    <p id="repairDetails"></p>
+    <form method="dialog">
+      <button value="no" autofocus>No</button>
+      <button value="yes">Yes</button>
     </form>
   </dialog>
   <div class="lightbox" id="lb" hidden><img id="lbimg" alt=""><a id="lbopen" target="_blank" rel="noopener">Open original</a></div>

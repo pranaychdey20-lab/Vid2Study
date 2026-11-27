@@ -68,7 +68,7 @@ const r = await getResult('dv1');
 assert.ok(r.debug.includes('SCREEN') && r.debug.includes('DESCRIBE'));
 console.log('two-call vision flow ok:', calls.map((c) => c.task).join(','));
 
-// ---- 330 frames: 110 survive the screening -> TWO describe calls, each with the same transcript and its own timed frames
+// ---- 330 frames: all distinct captures reach description in bounded calls.
 {
   const M = 330;
   const fr = Array.from({ length: M }, (_, i) => ({ index: i + 1, t: i * 10, shot: i * 10, filename: `s_${i + 1}.png`, h: '0'.repeat(64) }));
@@ -80,11 +80,11 @@ console.log('two-call vision flow ok:', calls.map((c) => c.task).join(','));
   await lp.runLocalPipeline({ mode: 'video', key: 'dv2', title: 'Gods 2', course: 'C', settings: { ...settings, screenInPerHour: 1500 }, signal: new AbortController().signal, onProgress() {} });
   const d = calls.filter((c) => c.task === 'DESCRIBE');
   assert.equal(calls.filter((c) => c.task === 'SCREEN').length, 1, '330 small frames still fit ONE screening call');
-  assert.equal(d.length, 2, '110 frames -> 2 describe calls');
+  assert.equal(d.length, 2, '330 frames -> 2 describe calls');
   const tr = (p) => p.slice(p.indexOf('TRANSCRIPT'));
   assert.equal(tr(d[0].prompt), tr(d[1].prompt), 'every call gets the same transcript');
   const ids = d.map((c) => [...c.prompt.matchAll(/Image \d+ = F(\d+) at/g)].map((m) => Number(m[1])));
-  assert.equal(ids[0].length + ids[1].length, 110);
+  assert.equal(ids[0].length + ids[1].length, 330);
   assert.ok(Math.max(...ids[0]) < Math.min(...ids[1]), 'consecutive time ranges, each frame with its time');
   console.log('describe split ok', ids.map((x) => x.length));
 }
@@ -172,7 +172,7 @@ console.log('two-call vision flow ok:', calls.map((c) => c.task).join(','));
   console.log('capCandidates ok');
 }
 
-// ---- 330 frames, default limit (300 per hour): the code cuts to ~275, the screening AI gets those, every image is labelled
+// ---- 330 frames: the request includes every distinct capture, each labelled independently.
 {
   const M = 330;
   const fr = Array.from({ length: M }, (_, i) => ({ index: i + 1, t: i * 10, shot: i * 10, filename: `c_${i + 1}.png`, h: '0'.repeat(64) }));
@@ -184,16 +184,13 @@ console.log('two-call vision flow ok:', calls.map((c) => c.task).join(','));
   await lp.runLocalPipeline({ mode: 'video', key: 'dv5', title: 'Gods 5', course: 'C', settings, signal: new AbortController().signal, onProgress() {} });
   const sc = calls.find((c) => c.task === 'SCREEN');
   const listed = [...sc.prompt.matchAll(/Image \d+ = F(\d+) at/g)].map((m) => Number(m[1]));
-  assert.equal(listed.length, 275, 'the code sent 275 (limit 300/h x 0.92 h) of the 330 frames to the screening AI');
-  assert.equal(sc.images, 275);
+  assert.equal(listed.length, M);
+  assert.equal(sc.images, M);
   assert.match(sc.labels[0], /^F\d+ at 00:00 \(on screen ~\d+ s\):$/, 'each image is preceded by its own id, time and how long it stays on screen');
   assert.ok(sc.labels.every((l, i) => l.startsWith('F' + listed[i] + ' at ')), 'labels match the prompt order exactly');
   const dsc = calls.filter((c) => c.task === 'DESCRIBE');
   for (const d of dsc) assert.ok(d.labels.every((l) => /^F\d+ at \d\d:\d\d/.test(l)), 'describing calls label every image too');
-  const gone = fr.filter((f) => !listed.includes(f.index));
-  assert.equal(gone.length, 55);
-  assert.equal(await getFrame('dv5/' + gone[0].filename), null, 'frames cut by the code are deleted');
-  console.log('code screening limit + labels ok');
+  console.log('complete screen review and labels ok');
 }
 
 // ---- animation: when the code must cut, the state that stays on screen longest wins its slice (not the earliest)

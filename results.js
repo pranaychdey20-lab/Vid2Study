@@ -10,6 +10,7 @@ import { paginate } from './lib/paginate.js';
 import { makeZip } from './lib/zip.js';
 import { nativeBridge } from './lib/llm.js';
 import { fmtTime, sanitizeName, toCopyText, stripTimestamps, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
+import { bindVisuals, VISUAL_CSS, visualRuntime } from './lib/textbook-visuals.js';
 
 const params = new URLSearchParams(location.search);
 const key = params.get('key');
@@ -19,6 +20,7 @@ const $ = (id) => document.getElementById(id);
 const objectUrls = [];
 let result = null;
 let paperJob = null;
+let repairJob = null;
 const openPractice = () => {
   $('paperStatus').textContent = '';
   $('paperDialog').showModal();
@@ -38,7 +40,14 @@ blockquote.callout p { margin: 4px 0; }
 blockquote.c-extra { border-left-style: dashed; }
 blockquote.c-check { border-left-style: dotted; }
 .katex-block { overflow-x: auto; overflow-y: hidden; margin: 10px 0; padding: 6px 4px; border-top: 1px solid #000; border-bottom: 1px solid #000; text-align: center; }
-.katex { font-size: 1.05em; }
+.math .katex { font-size: 1.14em; }
+.katex-block .katex { font-size: 1.22em; }
+.math-note-row { display: block; }
+.math-unavailable { overflow-wrap: anywhere; white-space: pre-wrap; }
+.katex .katex-mathml { user-select: none; }
+p.practice-answer { border-top: 1px solid #87939b; padding-top: 6px; margin-top: 12px; break-after: avoid; }
+p.practice-answer > strong:first-child { font-size: 1.05em; }
+p.practice-part { color: #314752; margin-top: 14px; break-after: avoid; }
 `;
 
 function toast(msg) {
@@ -101,7 +110,7 @@ async function compactDataUrl(blob) {
   } catch { return blobToDataUrl(blob); }
 }
 
-async function buildStandaloneHtml(markdown = result.summary_markdown, preview = false) {
+async function buildStandaloneHtml(markdown = result.summary_markdown, interactive = false) {
   const dataUrls = new Map();
   for (const [name, blob] of images) dataUrls.set(name, await compactDataUrl(blob));
   // printed / exported pages carry no video times (they stay in the stored notes, for the AI and "copy")
@@ -109,7 +118,9 @@ async function buildStandaloneHtml(markdown = result.summary_markdown, preview =
   const body = lectureHtml(result, markdown, {
     imageSrc: (src) => dataUrls.get(src.replace(/^images\//, '')) || src,
     math: renderMath,
-    pageNumbers: !preview
+    pageNumbers: !interactive,
+    localImagesOnly: true,
+    interactive
   }, true);
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escHtml(result.title)}</title>
@@ -123,7 +134,8 @@ async function buildStandaloneHtml(markdown = result.summary_markdown, preview =
   img { max-width: 100%; border: 2px solid #000; display: block; margin: 12px 0 0; }
   img + br { display: none; }
   img + br + em { display: block; font: normal 8.5pt ui-monospace, Consolas, "Courier New", monospace; border: 2px solid #000; border-top: 0; padding: 3px 8px; margin-bottom: 12px; background: #f2f2f2; }
-  code, .math { font-family: ui-monospace, Consolas, "Courier New", monospace; font-size: 9.5pt; }
+  code, .math { font-family: ui-monospace, Consolas, "Courier New", monospace; }
+  code { font-size: 9.5pt; }
   .katex-block .katex, .math .katex { font-family: KaTeX_Main, "Times New Roman", serif; }
   pre { background: #f2f2f2; border: 1px solid #000; padding: 8px; white-space: pre-wrap; }
   table { border-collapse: collapse; width: 100%; table-layout: auto; font-size: 10pt; line-height: 1.4; }
@@ -134,21 +146,24 @@ async function buildStandaloneHtml(markdown = result.summary_markdown, preview =
   #references + table td:first-child { width: 21%; }
   blockquote { border-left: 4px solid #000; margin: 8px 0; padding: 2px 12px; }
   ${NOTES_CSS}
+  ${VISUAL_CSS}
   @page { size: A4; margin: 9mm 8mm; }
   .contents .snapshot > :last-child > :last-child { margin-bottom: 0; }
   ${result.source === 'combined' ? '.snapshot { display: block; } .snapshot li { break-inside: avoid; } .snapshot ol, .snapshot ul { padding-left: 1.5em; }' : ''}
   @media print { html, body { margin: 0; padding: 0; max-width: none; } img, pre, figure { break-inside: avoid; } h2, h3 { break-after: avoid; } }
 </style></head><body>
 ${body}
+${interactive ? '<footer><p>AI assistance is available in the extension preview.</p></footer>' : ''}
+${interactive && body.includes('data-study-visual=') ? '<script>' + visualRuntime() + '</script>' : ''}
 </body></html>`;
-  return !preview && body.includes('class="page-ref"') ? paginate(html) : html;
+  return !interactive && body.includes('class="page-ref"') ? paginate(html) : html;
 }
 
-async function download(blob, filename) {
+async function download(blob, filename, saveAs = false) {
   const url = URL.createObjectURL(blob);
   setTimeout(() => URL.revokeObjectURL(url), 120000);
   try {
-    await chrome.downloads.download({ url, filename: `Lectures/${filename}`, conflictAction: 'uniquify' });
+    await chrome.downloads.download({ url, filename: `Lectures/${filename}`, conflictAction: 'uniquify', saveAs });
     return;
   } catch { /* fall back to a plain link */ }
   const a = document.createElement('a');
@@ -183,7 +198,7 @@ async function downloadZip() {
     ...(result.writerReplies?.length ? [{ name: `${folder}/writer-replies.txt`, data: result.writerReplies.map((reply, i) =>
       `=== Reply ${i + 1}${reply.batch ? ` · Batch ${reply.batch}` : ''} · ${reply.task} · ${reply.model}${reply.truncated ? ' · Truncated' : ''} ===\n${reply.text}`).join('\n\n') }] : []),
     ...(result.coverage?.length ? [{ name: `${folder}/coverage.json`, data: JSON.stringify(result.coverage, null, 2) }] : []),
-    { name: `${folder}/summary.html`, data: await buildStandaloneHtml() },
+    { name: `${folder}/summary.html`, data: await buildStandaloneHtml(result.summary_markdown, true) },
     {
       name: `${folder}/frames.json`,
       data: JSON.stringify(result.frames.map((f) => ({
@@ -202,18 +217,12 @@ async function downloadZip() {
   await download(await makeZip(files), `${folder}.zip`);
 }
 
-async function openPreview() {
+async function openPreview(saveHtml = false) {
   const url = new URL(chrome.runtime.getURL('results.html'));
   url.searchParams.set('key', key);
   url.searchParams.set('preview', '1');
+  if (saveHtml) url.searchParams.set('save', 'html');
   await chrome.tabs.create({ url: url.href });
-}
-
-async function renderPreview() {
-  $('status').textContent = 'Preparing the notes preview…';
-  const html = await buildStandaloneHtml(result.summary_markdown, true);
-  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-  location.replace(url);
 }
 
 async function savePdf() {
@@ -247,17 +256,17 @@ async function savePdf() {
       const detail = await response.json().catch(() => null);
       throw new Error(detail?.error?.message || 'The bridge could not create the PDF.');
     }
-    await download(await response.blob(), `${sanitizeName(result.title, 'lecture')}.pdf`);
+    await download(await response.blob(), `${sanitizeName(result.title, 'lecture')}.pdf`, true);
     toast('PDF saved');
   } finally {
     button.disabled = false;
-    button.textContent = 'Print';
+    button.textContent = 'Save as PDF';
   }
 }
 
 async function init() {
   const st = document.createElement('style');
-  st.textContent = NOTES_CSS;
+  st.textContent = NOTES_CSS + VISUAL_CSS;
   document.head.appendChild(st);
   if (!key) { $('status').textContent = 'No lecture selected.'; return; }
   result = await getResult(key);
@@ -269,7 +278,10 @@ async function init() {
     const blob = await getFrame(`${key}/${f.filename}`);
     if (blob) images.set(f.filename, blob);
   }
-  if (previewView) return renderPreview();
+  if (previewView) {
+    $('preview').hidden = true;
+    document.body.classList.add('wide-preview');
+  }
   $('practice').hidden = !(await loadSettings()).practiceQuestions;
   const blobUrls = new Map();
   for (const [name, blob] of images) {
@@ -286,9 +298,84 @@ async function init() {
       imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
       math: renderMath
     });
+    bindVisuals($('out'));
   };
   draw();
   $('status').remove();
+  if (previewView) {
+    const { mountAssistant } = await import('./lib/textbook-assistant.js');
+    await mountAssistant({ key, root: $('out'), read: () => result, redraw: next => { result = next; draw(); } })
+      .catch(error => toast(error.message));
+  }
+  if (previewView && params.get('save') === 'html') openHtmlDialog();
+
+  $('repair').addEventListener('click', async () => {
+    if (repairJob) return;
+    repairJob = new AbortController();
+    const { signal } = repairJob;
+    const button = $('repair');
+    button.disabled = true;
+    button.textContent = 'Checking formatting…';
+    const withNotesLock = work => navigator.locks.request(PROCESSING_LOCK, { mode: 'shared', signal }, () =>
+      navigator.locks.request(lectureLockName(key), { signal }, work));
+    try {
+      if (!window.katex) throw new Error('The math renderer did not load.');
+      const { repairFormatting, repairWithCheapAi, applyRawRepairs, AI_REPAIR_LIMIT } = await import('./lib/repair-formatting.js');
+      const validMath = (tex, display) => !!renderMath(tex, display);
+      let review, raw;
+      result = await withNotesLock(async () => {
+        const saved = await getResult(key);
+        if (!saved) throw new Error('These notes are no longer saved.');
+        review = repairFormatting(saved.summary_markdown, validMath);
+        raw = repairFormatting(saved.summary_raw ?? saved.summary_markdown, validMath);
+        if (!review.repairs && !raw.repairs) return saved;
+        const fixed = { ...saved, summary_markdown: review.markdown, summary_raw: raw.markdown };
+        await putResult(fixed);
+        return fixed;
+      });
+      draw();
+      if (!review.issues.length) {
+        toast(review.repairs || raw.repairs ? 'Formatting fixes saved' : 'No formatting problems found');
+        return;
+      }
+      const dialog = $('repairDialog');
+      const count = review.issues.length;
+      const sent = Math.min(count, AI_REPAIR_LIMIT);
+      $('repairDetails').textContent = count + (count === 1 ? ' passage needs' : ' passages need') +
+        ' review. Send ' + sent + (sent === 1 ? ' passage' : ' passages') + ' and nearby lines to your Cheap AI?';
+      dialog.returnValue = 'no';
+      const approved = await new Promise(resolve => {
+        dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes'), { once: true });
+        dialog.showModal();
+      });
+      if (!approved) { toast('Local scan complete. Unresolved passages were kept.'); return; }
+      button.textContent = 'Checking with Cheap AI…';
+      result = await withNotesLock(async () => {
+        const saved = await getResult(key);
+        if (saved?.summary_markdown !== review.markdown || saved?.summary_raw !== result.summary_raw) {
+          throw new Error('The notes changed. Run Fix formatting again.');
+        }
+        const { markdown: fixed, accepted } = await repairWithCheapAi(review, await loadSettings(), validMath, signal);
+        signal.throwIfAborted();
+        const changes = fixed !== review.markdown;
+        const remaining = repairFormatting(fixed, validMath).issues.length;
+        if (!changes) { toast('No safe AI formatting fixes were found.'); return saved; }
+        const summary_raw = saved.summary_raw === saved.summary_markdown ? fixed : applyRawRepairs(saved.summary_raw, accepted);
+        const updated = { ...saved, summary_markdown: fixed, summary_raw };
+        if (!await getResult(key)) throw new Error('These notes are no longer saved.');
+        await putResult(updated);
+        toast(remaining ? remaining + ' passages still need review' : 'Formatting fixes saved');
+        return updated;
+      });
+      draw();
+    } catch (error) {
+      if (!signal.aborted) toast(error.message || String(error));
+    } finally {
+      repairJob = null;
+      button.disabled = false;
+      button.textContent = 'Fix formatting';
+    }
+  });
 
   $('out').addEventListener('click', (e) => {
     if (e.target.tagName !== 'IMG') return;
@@ -314,7 +401,7 @@ async function init() {
     $('paperCancel').textContent = 'Cancel generation';
     status.textContent = 'Preparing the practice paper';
     try {
-      const { writePracticePaper, withoutPractice } = await import('./lib/practice-paper.js');
+      const { writePracticePaper, appendPracticePaper } = await import('./lib/practice-paper.js');
       result = await navigator.locks.request(PROCESSING_LOCK, { mode: 'shared', signal }, () =>
         navigator.locks.request(lectureLockName(key), { signal }, async () => {
         const saved = await getResult(key);
@@ -327,7 +414,7 @@ async function init() {
           }
         });
         signal.throwIfAborted();
-        const addPaper = markdown => `${withoutPractice(markdown)}\n\n${paper}`;
+        const addPaper = markdown => appendPracticePaper(markdown, paper);
         const updated = { ...saved, summary_markdown: addPaper(saved.summary_markdown), summary_raw: addPaper(saved.summary_raw) };
         // Full deletion can happen from a second Saved notes tab during generation.
         if (!await getResult(key)) throw new Error('These notes are no longer saved.');
@@ -347,11 +434,59 @@ async function init() {
       $('paperCancel').textContent = 'Not now';
     }
   });
-  if (offerPractice && !$('practice').hidden && !/^##[ \t]+Practice questions[ \t]*$/im.test(result.summary_markdown)) openPractice();
+  if (offerPractice && !$('practice').hidden && !/^##[ \t]+Practice questions(?: — Paper \d+)?[ \t]*$/im.test(result.summary_markdown)) openPractice();
 }
 
 $('copy').addEventListener('click', () => result && copyText());
 $('zip').addEventListener('click', () => result && downloadZip().catch((e) => toast(`Zip failed: ${e.message}`)));
+const openHtmlDialog = () => {
+  $('saveLibrary').hidden = !window.showDirectoryPicker;
+  $('htmlDialog').showModal();
+};
+$('saveHtml').addEventListener('click', () => {
+  if (!result) return;
+  if (window === window.top) openHtmlDialog();
+  else openPreview(true).catch(error => toast(error.message));
+});
+$('saveStandalone').addEventListener('click', async () => {
+  if (!result) return;
+  const name = sanitizeName(result.title, 'lecture') + '.html';
+  try {
+    const file = window.showSaveFilePicker ? await window.showSaveFilePicker({
+      suggestedName: name, types: [{ description: 'HTML textbook', accept: { 'text/html': ['.html'] } }]
+    }) : null;
+    $('htmlStatus').textContent = 'Preparing offline HTML…';
+    const blob = new Blob([await buildStandaloneHtml(result.summary_markdown, true)], { type: 'text/html' });
+    if (!file) {
+      await download(blob, name, true);
+      $('htmlStatus').textContent = 'HTML sent to your browser’s downloads.';
+    } else {
+      const stream = await file.createWritable();
+      try { await stream.write(blob); await stream.close(); }
+      catch (error) { await stream.abort().catch(() => {}); throw error; }
+      $('htmlStatus').textContent = 'Saved ' + file.name;
+    }
+  } catch (error) {
+    if (error.name !== 'AbortError') $('htmlStatus').textContent = 'HTML save failed: ' + error.message;
+  }
+});
+$('saveLibrary').addEventListener('click', async () => {
+  if (!result || !window.showDirectoryPicker) return;
+  const button = $('saveLibrary');
+  button.disabled = true;
+  try {
+    const root = await window.showDirectoryPicker({ id: 'vid2study-library', mode: 'readwrite' });
+    $('htmlStatus').textContent = 'Saving the lecture and updating the library…';
+    const { saveLibraryLecture } = await import('./lib/textbook-library.js');
+    const html = await buildStandaloneHtml(result.summary_markdown, true);
+    const saved = await navigator.locks.request('vid2study:library', () => saveLibraryLecture(root, result, html));
+    $('htmlStatus').textContent = 'Saved ' + saved.location + '. Open ' + saved.index + ' in the chosen folder to browse the library.';
+  } catch (error) {
+    if (error.name !== 'AbortError') $('htmlStatus').textContent = 'Library save failed: ' + error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 // TEMP DEBUG: open the run's plain-text dump in a new tab (Ctrl+S saves it)
 $('debug').addEventListener('click', () => {
   if (!result?.debug) return;
@@ -366,6 +501,6 @@ $('paperCancel').addEventListener('click', () => {
   else $('paperDialog').close();
 });
 $('paperDialog').addEventListener('cancel', event => { if (paperJob) { event.preventDefault(); paperJob.abort(); } });
-addEventListener('pagehide', () => { paperJob?.abort(); objectUrls.forEach((u) => URL.revokeObjectURL(u)); });
+addEventListener('pagehide', () => { paperJob?.abort(); repairJob?.abort(); objectUrls.forEach((u) => URL.revokeObjectURL(u)); });
 
 init().catch((e) => { $('status').textContent = `Could not load summary: ${e.message}`; });

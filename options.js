@@ -494,7 +494,7 @@ async function load() {
   showEngine();
   $('downloadFirst').checked = S.downloadFirst !== false;
   $('useVision').checked = S.useVision;
-  for (const id of ['sceneThreshold', 'sampleSeconds', 'maxScenes', 'ocrMinWords', 'maxVision', 'chunkMinutes', 'shortVideoMinutes', 'scanRefine', 'writerImages', 'trimTokens', 'screenImages', 'screenInPerHour', 'maxRequestMB', 'screenKeepPerHour', 'asrModel', 'asrLanguage', 'listenSpeed', 'downloadMaxHours']) $(id).value = S[id];
+  for (const id of ['sceneThreshold', 'sampleSeconds', 'ocrMinWords', 'chunkMinutes', 'shortVideoMinutes', 'writerImages', 'trimTokens', 'screenImages', 'maxRequestMB', 'screenKeepPerHour', 'asrModel', 'asrLanguage', 'listenSpeed', 'downloadMaxHours']) $(id).value = S[id];
   $('mediaResolution').value = S.mediaResolution;
   $('detail').value = S.detail;
   $('webSearch').checked = S.webSearch !== false;
@@ -545,18 +545,14 @@ function readForm() {
     downloadMaxHours: num('downloadMaxHours', 0, 48, 3),
     sceneThreshold: num('sceneThreshold', 0.005, 0.9, 0.05),
     sampleSeconds: num('sampleSeconds', 1, 60, 2),
-    maxScenes: clamp($('maxScenes').value, 10, 3000, 600),
     ocrMinWords: clamp($('ocrMinWords').value, 0, 200, 12),
-    maxVision: clamp($('maxVision').value, 0, 300, 60),
     chunkMinutes: num('chunkMinutes', 5, 30, 12),
     shortVideoMinutes: num('shortVideoMinutes', 0, 240, 60),
-    scanRefine: clamp($('scanRefine').value, 1, 3, 2),
     writerImages: Math.min(20, Math.max(0, Math.round(Number($('writerImages').value)))) || 0,
     writeFullTranscript: $('writeFullTranscript').checked,
     practiceQuestions: $('practiceQuestions').checked,
     researchReferences: $('researchReferences').checked,
     screenImages: clamp($('screenImages').value, 50, 3000, 3000),
-    screenInPerHour: clamp($('screenInPerHour').value, 20, 1500, 300),
     maxRequestMB: clamp($('maxRequestMB').value, 0, 200, 0),
     screenKeepPerHour: clamp($('screenKeepPerHour').value, 10, 600, 250),
     trimTokens: Math.max(0, Math.round(Number($('trimTokens').value) || 0)),
