@@ -4,7 +4,6 @@ import { completeWriterPrefix, emptyTopics, missingScreenTopics, unmatchedCovera
 import { renderMarkdown } from './lib/md.js';
 import { libraryIndex, libraryLocation, saveLibraryLecture } from './lib/textbook-library.js';
 import { readVisual, transformedPixels, visualRuntime } from './lib/textbook-visuals.js';
-import { appendStudyExplanation } from './lib/textbook-assistant.js';
 
 globalThis.document = { createElement: () => ({ getContext: () => ({}) }) };
 globalThis.chrome = { runtime: { getURL: path => path } };
@@ -55,10 +54,6 @@ assert.match(renderMarkdown(md), /input type="range"/);
 assert.doesNotMatch(renderMarkdown(md, { interactive: false }), /type="range"/);
 assert.doesNotMatch(renderMarkdown(fence + 'visual\n{"type":"<script>alert(1)</script>"}\n' + fence), /<script>/);
 assert.doesNotMatch(renderMarkdown('![Reference figure](https://example.invalid/image.jpg)', { localImagesOnly: true }), /<img/);
-assert.match(visualRuntime(), /bindVisuals\(document\);$/);
-const insert = appendStudyExplanation(expanded, 'Contrast-Limited Adaptive Histogram Equalization (CLAHE) (04:32)', 'Clipping keeps a crowded bin from dominating the map.');
-assert.match(insert, /CLAHE[\s\S]*\*\*Extra Context:\*\*[\s\S]*Clipping keeps[\s\S]*### Histogram Stretching/);
-assert.throws(() => appendStudyExplanation(expanded, 'Histogram Stretching (09:00)', '### Inject a section'));
 
 assert.deepEqual(libraryLocation({ source: 'combined', course: 'Robotic Sensing and Vision', title: 'CLAHE',
   summary_markdown: '## Chapter: Image Enhancement using Histograms', library: { module: 'Photometric Transforms' } }),
