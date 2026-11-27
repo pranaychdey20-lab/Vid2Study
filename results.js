@@ -3,57 +3,38 @@
  * IndexedDB, renders them (KaTeX math, callouts, step diagrams), and handles
  * copy / zip bundle / printable view.
  */
-import { getResult, getFrame, putResult } from './lib/db.js';
+import { getResult, putResult } from './lib/db.js';
 import { loadSettings } from './lib/settings.js';
-import { lectureHtml, writerLabel } from './lib/lecture-layout.js';
-import { paginate } from './lib/paginate.js';
+import { writerLabel } from './lib/lecture-layout.js';
 import { makeZip } from './lib/zip.js';
 import { nativeBridge } from './lib/llm.js';
-import { fmtTime, sanitizeName, toCopyText, stripTimestamps, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
-import { bindVisuals, VISUAL_CSS, visualRuntime } from './lib/textbook-visuals.js';
-import { renderMarkdown } from './lib/md.js';
-import { createNotesStore } from './lib/notes-store.js';
+import { fmtTime, sanitizeName, toCopyText, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
+import { VISUAL_CSS, visualRuntime } from './lib/textbook-visuals.js';
+import { createNotesView, NOTES_CSS, renderMath } from './lib/notes-view.js';
+import { buildStandaloneHtml as buildHtml } from './lib/standalone-html.js';
 import { loadLook, applyLook } from './lib/ui-theme.js';
 applyLook(loadLook()); // the look the assistant saved (colours, type, motion), before the notes are drawn
-import { mountEditor } from './lib/notes-editor.js';
 
 const params = new URLSearchParams(location.search);
 const key = params.get('key');
 const previewView = (params.get('preview') === '1' || params.get('print') === '1') && window === window.top;
 const offerPractice = params.get('practice') === '1';
 const $ = (id) => document.getElementById(id);
-const objectUrls = [];
 let result = null;
 let paperJob = null;
 let repairJob = null;
+const tokens = () => (result?.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '');
+const view = createNotesView({
+  out: $('out'), toast: msg => toast(msg),
+  onDraw: next => { result = next; $('meta').textContent = `${next.frames.length} figures · ${new Date(next.createdAt).toLocaleString()} · ${writerLabel(next)}${tokens()}`; }
+});
+/** filename -> Blob of the open lecture (owned by the view, which frees it) */
+const images = view.images;
 const openPractice = () => {
   $('paperStatus').textContent = '';
   $('paperDialog').showModal();
 };
-/** filename -> Blob */
-const images = new Map();
 
-/** Look and feel of callouts, figures and math: shared by the panel and the standalone export. */
-export const NOTES_CSS = `
-.contents {break-after:page} .snapshot,.math-note-row {display:grid;grid-template-columns:55% 42%;gap:3%} .math-note-row>p {border-left:1px solid #aab7bd;padding-left:12px}.page-ref {display:inline;font-size:.9em}.page-ref::after {content:"";} .figure-pair {display:grid;grid-template-columns:1fr 1fr;gap:12px;break-inside:avoid} figure {margin:10px 0} figure img {max-height:145mm;object-fit:contain} figcaption,.topic-ref {font-size:.85em;color:#475963}.banner-meta {color:#465762}.slide-ocr,.watch-out,.quick-check,.extra-context {display:block;border-left:3px solid #486876;padding:6px 12px;margin:8px 0;background:#f5f7f7}.extra-context {border-color:#a17439}.slide-ocr strong {display:block;font-size:.7em;letter-spacing:.06em}.math-note-row,figure,.slide-ocr,.watch-out,tr {break-inside:avoid} h2,h3 {break-after:avoid} @page {size:A4;margin:16mm}
-blockquote.callout { margin: 12px 0; padding: 6px 12px; border: 0; border-left: 6px solid #000; background: #f2f2f2; }
-.inline-explanation { margin: 8px 0 14px; padding: 6px 12px; border: 1px solid #829aa3; border-left: 3px solid #466c7a; background: #f2f7f8; break-inside: avoid; }
-.inline-explanation p { margin: 4px 0; }
-@media print { p:has(+ .inline-explanation), ul:has(+ .inline-explanation), ol:has(+ .inline-explanation), .slide-ocr:has(+ .inline-explanation) { break-after: avoid; } }
-blockquote.callout > p:first-child > strong:first-child { display: inline-block; background: #000; color: #fff; padding: 1px 7px; margin-right: 6px; font: 800 10px/1.7 ui-monospace, Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
-blockquote.callout p { margin: 4px 0; }
-blockquote.c-extra { border-left-style: dashed; }
-blockquote.c-check { border-left-style: dotted; }
-.katex-block { overflow-x: auto; overflow-y: hidden; margin: 10px 0; padding: 6px 4px; border-top: 1px solid #000; border-bottom: 1px solid #000; text-align: center; }
-.math .katex { font-size: 1.14em; }
-.katex-block .katex { font-size: 1.22em; }
-.math-note-row { display: block; }
-.math-unavailable { overflow-wrap: anywhere; white-space: pre-wrap; }
-.katex .katex-mathml { user-select: none; }
-p.practice-answer { border-top: 1px solid #87939b; padding-top: 6px; margin-top: 12px; break-after: avoid; }
-p.practice-answer > strong:first-child { font-size: 1.05em; }
-p.practice-part { color: #314752; margin-top: 14px; break-after: avoid; }
-`;
 
 function toast(msg) {
   const t = $('toast');
@@ -62,109 +43,7 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 1800);
 }
 
-const blobToDataUrl = (blob) =>
-  new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
-
-const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-/** LaTeX -> HTML with KaTeX. Returns null (plain-text fallback) when a formula cannot be rendered. */
-function renderMath(tex, display) {
-  const katex = window.katex;
-  if (!katex) return null;
-  const html = katex.renderToString(tex, { displayMode: display, throwOnError: false, trust: false });
-  return html.includes('katex-error') ? null : html;
-}
-
-let katexCss = null;
-/** KaTeX stylesheet with the fonts inlined as base64, so exported pages work offline. */
-async function inlineKatexCss() {
-  if (katexCss) return katexCss;
-  let css = await (await fetch('lib/katex/katex.min.css')).text();
-  const urls = [...new Set([...css.matchAll(/url\((fonts\/[^)]+)\)/g)].map((m) => m[1]))];
-  for (const u of urls) {
-    const data = await blobToDataUrl(await (await fetch(`lib/katex/${u}`)).blob());
-    css = css.split(`url(${u})`).join(`url(${data})`);
-  }
-  return (katexCss = css);
-}
-
-/** Self-contained, print-friendly HTML: images and math fonts embedded. */
-/**
- * A figure for export: JPEG, at most 1280 px wide. Screenshots are stored as lossless PNG (exact for OCR),
- * which makes a PDF 5-10x bigger than needed; JPEG at 0.82 keeps slide text sharp at print size.
- */
-async function compactDataUrl(blob) {
-  try {
-    const bmp = await createImageBitmap(blob);
-    const k = Math.min(1, 1280 / bmp.width);
-    const c = document.createElement('canvas');
-    c.width = Math.round(bmp.width * k);
-    c.height = Math.round(bmp.height * k);
-    const g = c.getContext('2d');
-    g.fillStyle = '#fff';
-    g.fillRect(0, 0, c.width, c.height);
-    g.drawImage(bmp, 0, 0, c.width, c.height);
-    bmp.close?.();
-    const jpg = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
-    return blobToDataUrl(jpg && jpg.size < blob.size ? jpg : blob);
-  } catch { return blobToDataUrl(blob); }
-}
-
-async function buildStandaloneHtml(markdown = result.summary_markdown, interactive = false, { back = '', shared = '' } = {}) {
-  const dataUrls = new Map();
-  for (const [name, blob] of images) dataUrls.set(name, await compactDataUrl(blob));
-  // printed / exported pages carry no video times (they stay in the stored notes, for the AI and "copy")
-  if (result.source !== 'combined') markdown = stripTimestamps(markdown);
-  const body = lectureHtml(result, markdown, {
-    imageSrc: (src) => dataUrls.get(src.replace(/^images\//, '')) || src,
-    math: renderMath,
-    pageNumbers: !interactive,
-    localImagesOnly: true,
-    interactive
-  }, true);
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>${escHtml(result.title)}</title>
-<style>${body.includes("class=\"katex") ? await inlineKatexCss() : ""}</style>
-<style>
-  body { font: 11pt/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #000; background: #fff; margin: 0; }
-  @media screen { body { max-width: 1100px; margin: 24px auto; padding: 0 clamp(12px, 2vw, 24px); } }
-  h1 { font-size: 24pt; font-weight: 800; line-height: 1.2; margin: 0 0 6px; }
-  h2 { font-size: 14pt; font-weight: 800; text-transform: uppercase; border-top: 3px solid #000; padding-top: 6px; margin-top: 26px; }
-  h3 { font-size: 12pt; font-weight: 800; } .meta { font: 9pt ui-monospace, Consolas, "Courier New", monospace; color: #444; margin-bottom: 16px; }
-  img { max-width: 100%; border: 2px solid #000; display: block; margin: 12px 0 0; }
-  img + br { display: none; }
-  img + br + em { display: block; font: normal 8.5pt ui-monospace, Consolas, "Courier New", monospace; border: 2px solid #000; border-top: 0; padding: 3px 8px; margin-bottom: 12px; background: #f2f2f2; }
-  code, .math { font-family: ui-monospace, Consolas, "Courier New", monospace; }
-  code { font-size: 9.5pt; }
-  .katex-block .katex, .math .katex { font-family: KaTeX_Main, "Times New Roman", serif; }
-  pre { background: #f2f2f2; border: 1px solid #000; padding: 8px; white-space: pre-wrap; }
-  table { border-collapse: collapse; width: 100%; table-layout: auto; font-size: 10pt; line-height: 1.4; }
-  thead { display: table-header-group; }
-  th, td { border: 1px solid #000; padding: 5px 7px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-  th { background: #f2f2f2; }
-  th:first-child, td:first-child { min-width: 8ch; }
-  #references + table td:first-child { width: 21%; }
-  blockquote { border-left: 4px solid #000; margin: 8px 0; padding: 2px 12px; }
-  ${NOTES_CSS}
-  ${VISUAL_CSS}
-  @page { size: A4; margin: 9mm 8mm; }
-  .contents .snapshot > :last-child > :last-child { margin-bottom: 0; }
-  ${result.source === 'combined' ? '.snapshot { display: block; } .snapshot li { break-inside: avoid; } .snapshot ol, .snapshot ul { padding-left: 1.5em; }' : ''}
-  @media print { html, body { margin: 0; padding: 0; max-width: none; } img, pre, figure { break-inside: avoid; } h2, h3 { break-after: avoid; } }
-  .lib-back { margin: 0 0 10px; font: 12.5px/1.3 system-ui, sans-serif; } .lib-back a { color: #0e6a64; text-decoration: none; } @media print { .lib-back { display: none; } }
-</style></head><body>
-${back ? `<p class="lib-back"><a href="${escHtml(back)}" target="_top">← Back to the library</a></p>` : ''}
-${body}
-${interactive ? '<footer><p>Questions and edits are available in the Vid2Study extension.</p></footer>' : ''}
-${interactive && body.includes('data-study-visual=') ? (shared ? '<script src="' + shared + '"></script>' : '<script>' + await visualRuntime() + '</script>') : ''}
-</body></html>`;
-  return !interactive && body.includes('class="page-ref"') ? paginate(html) : html;
-}
+const buildStandaloneHtml = (markdown = result.summary_markdown, interactive = false, options = {}) => buildHtml({ result, images, markdown, interactive, ...options });
 
 async function download(blob, filename, saveAs = false) {
   const url = URL.createObjectURL(blob);
@@ -277,58 +156,14 @@ async function init() {
   st.textContent = NOTES_CSS + VISUAL_CSS;
   document.head.appendChild(st);
   if (!key) { $('status').textContent = 'No lecture selected.'; return; }
-  result = await getResult(key);
+  result = await view.open(key); // loads the lecture and its figures, draws it, attaches the editor and the assistant
   if (!result) { $('status').textContent = 'No saved summary for this lecture yet.'; return; }
   $('debug').hidden = !result.debug; // TEMP DEBUG
-
-  for (const f of result.frames) {
-    if (!f.filename) continue;
-    const blob = await getFrame(`${key}/${f.filename}`);
-    if (blob) images.set(f.filename, blob);
-  }
   if (previewView) document.body.classList.add('wide-preview');
   $('practice').hidden = !(await loadSettings()).practiceQuestions;
-  const blobUrls = new Map(), nameOfUrl = new Map();
-  for (const [name, blob] of images) {
-    const u = URL.createObjectURL(blob);
-    objectUrls.push(u);
-    blobUrls.set(name, u);
-    nameOfUrl.set(u, name);
-  }
-
   document.title = result.title;
-  const tokens = result.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '';
-  let editor = null;
-  const draw = () => {
-    $('meta').textContent = `${result.frames.length} figures · ${new Date(result.createdAt).toLocaleString()} · ${writerLabel(result)}${tokens}`;
-    $('out').innerHTML = lectureHtml(result, result.summary_markdown, {
-      imageSrc: (src) => blobUrls.get(src.replace(/^images\//, '')) || src,
-      math: renderMath
-    });
-    bindVisuals($('out'));
-    editor?.refresh();
-  };
-  draw();
   $('status').remove();
-  // editing (by hand or through the assistant) goes through one store: one undo / redo history, both copies of the notes kept in step
-  const store = createNotesStore({ key, read: () => result, redraw: next => { result = next; draw(); } });
-  editor = mountEditor({ root: $('out'), read: () => result, store, fileOf: img => nameOfUrl.get(img.currentSrc || img.src), toast });
-  const syncEdit = () => { $('undoEdit').disabled = !store.canUndo(); $('redoEdit').disabled = !store.canRedo(); };
-  store.subscribe(syncEdit);
-  const guard = (work) => async () => { try { await work(); } catch (error) { toast(error.message || String(error)); } };
-  $('undoEdit').addEventListener('click', guard(() => store.undo()));
-  $('redoEdit').addEventListener('click', guard(() => store.redo()));
-  $('editNotes').addEventListener('click', () => {
-    const on = editor.toggle();
-    $('editNotes').setAttribute('aria-pressed', String(on));
-    $('editNotes').classList.toggle('on', on);
-    $('editNotes').textContent = on ? 'Done editing' : 'Edit notes';
-    $('undoEdit').hidden = $('redoEdit').hidden = !on;
-    syncEdit();
-  });
-  import('./lib/textbook-assistant.js')
-    .then(({ mountAssistant }) => mountAssistant({ root: $('out'), read: () => result, store, preview: md => renderMarkdown(md, { math: renderMath }) }))
-    .catch(error => toast('The notes assistant could not start: ' + error.message));
+  view.wireEditBar({ edit: $('editNotes'), undo: $('undoEdit'), redo: $('redoEdit') });
   if (previewView && params.get('save') === 'html') openHtmlDialog();
 
   $('repair').addEventListener('click', async () => {
@@ -492,6 +327,7 @@ $('saveStandalone').addEventListener('click', async () => {
     if (error.name !== 'AbortError') $('htmlStatus').textContent = 'HTML save failed: ' + error.message;
   }
 });
+$('openLibrary').addEventListener('click', () => window.open(chrome.runtime.getURL('library-open.html'), '_blank'));
 $('saveLibrary').addEventListener('click', async () => {
   if (!result || !window.showDirectoryPicker) return;
   const button = $('saveLibrary');
@@ -499,10 +335,12 @@ $('saveLibrary').addEventListener('click', async () => {
   try {
     const root = await window.showDirectoryPicker({ id: 'vid2study-library', mode: 'readwrite' });
     $('htmlStatus').textContent = 'Saving the lecture and updating the library…';
-    const { saveLibraryLecture } = await import('./lib/textbook-library.js');
-    const html = await buildStandaloneHtml(result.summary_markdown, true, { back: '../../../../Vid2Study.html', shared: '../../../../.vid2study/visuals.js' });
+    const { saveLibraryLecture, libraryScript, LECTURE_LINKS } = await import('./lib/textbook-library.js');
+    const html = await buildStandaloneHtml(result.summary_markdown, true, LECTURE_LINKS);
     const runtime = await visualRuntime();
-    const saved = await navigator.locks.request('vid2study:library', () => saveLibraryLecture(root, result, html, runtime));
+    const shelf = await libraryScript();
+    const saved = await navigator.locks.request('vid2study:library', () => saveLibraryLecture(root, result, html, runtime, { shelf, extensionId: chrome.runtime?.id || '' }));
+    import('./lib/library-handle.js').then(({ rememberLibrary }) => rememberLibrary(root)).catch(() => {}); // so the library page opens this folder next time
     $('htmlStatus').textContent = 'Saved ' + saved.location + '. Open ' + saved.index + ' in the chosen folder to browse the library.';
   } catch (error) {
     if (error.name !== 'AbortError') $('htmlStatus').textContent = 'Library save failed: ' + error.message;
@@ -523,6 +361,6 @@ $('paperCancel').addEventListener('click', () => {
   else $('paperDialog').close();
 });
 $('paperDialog').addEventListener('cancel', event => { if (paperJob) { event.preventDefault(); paperJob.abort(); } });
-addEventListener('pagehide', () => { paperJob?.abort(); repairJob?.abort(); objectUrls.forEach((u) => URL.revokeObjectURL(u)); });
+addEventListener('pagehide', () => { paperJob?.abort(); repairJob?.abort(); view.release(); });
 
 init().catch((e) => { $('status').textContent = `Could not load summary: ${e.message}`; });
