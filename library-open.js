@@ -1,16 +1,18 @@
 /**
  * The library inside the extension: the same shelf as the standalone Vid2Study.html (lib/library-ui.js), but a lecture opens right
  * here through the shared notes view (lib/notes-view.js), so the notes assistant, with the providers and models from Options (API, CLI
- * bridge, Gemini web), works on it, and edits are written back to the lecture's file in the library folder.
+ * bridge, Gemini web), works on it, and edits are written back to the lecture's file in the library folder. The reader carries the same
+ * Edit notes / Fix formatting / Generate practice paper tools as the saved-notes page (lib/notes-tools.js).
  *
- * Kept apart from "Saved notes" on purpose: the shelf is drawn from the library folder's manifest only, so a lecture is listed here
- * only after it was added to the library with Save as HTML.
+ * "Saved notes" (the notes kept in this browser) is its own section and stays separate from the library: the shelf is drawn from the
+ * library folder's manifest only, so a lecture is listed on it only after it was added with Save as HTML.
  */
 import { libraryShell } from './lib/library-page.js';
 import { readLibraryManifest, readLibraryLecture, lectureId, saveLibraryLecture, LECTURE_LINKS } from './lib/textbook-library.js';
 import { recallLibrary, rememberLibrary, ensureAccess } from './lib/library-handle.js';
-import { listResultKeys } from './lib/db.js';
+import { listResultKeys, listSavedNotes } from './lib/db.js';
 import { createNotesView, NOTES_CSS } from './lib/notes-view.js';
+import { mountNotesTools } from './lib/notes-tools.js';
 import { buildStandaloneHtml } from './lib/standalone-html.js';
 import { VISUAL_CSS } from './lib/textbook-visuals.js';
 import { loadLook, applyLook } from './lib/ui-theme.js';
@@ -32,14 +34,13 @@ let root = null;
 async function begin(handle) {
   try {
     root = handle;
-    const entries = await readLibraryManifest(handle);
-    if (!entries.length) { say('This folder has no lectures yet. Open a saved lecture, choose Save as HTML, then Choose library folder.'); return; }
+    const entries = handle ? await readLibraryManifest(handle) : []; // no folder: the saved notes only
     const ids = new Map(await Promise.all((await listResultKeys()).map(async key => [await lectureId(key), key]))); // keys only: no lecture text is loaded
     await mount(entries, ids);
   } catch (error) { say(error.message || String(error)); }
 }
 
-/** CSS wrapped so it applies only inside the reader (the shelf and the notes use different rules for the same tags). */
+/** CSS limited to the reader (the shelf and the notes use different rules for the same tags); print-only @page rules stay out. */
 const scoped = css => {
   const page = css.indexOf('@page');
   const clean = page < 0 ? css : css.slice(0, page) + css.slice(css.indexOf('}', page) + 1);
@@ -53,32 +54,58 @@ async function mount(entries, ids) {
   style.textContent = shell.css +
     '\n#reader{--k:#000;--w:#fff;--g1:#f2f2f2;--g2:#d9d9d9;--g3:#8a8a8a;--y:#FFE500;--red:#E00000;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;' +
     'min-height:100%;background:#fff;color:#000;font:15px/1.65 "Helvetica Neue",Helvetica,Arial,sans-serif}' +
-    '\n.lib-tools{position:sticky;top:0;z-index:3;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;padding:.5rem 1rem;border-bottom:1px solid var(--line);background:var(--card)}' +
-    '\n.lib-tools [hidden]{display:none}.lib-tools .on{background:var(--teal);color:#fff}.lib-sync{margin-left:auto;color:var(--muted);font-size:12.5px}.lib-note{padding:1rem 1.2rem;color:var(--muted)}' +
+    '\n.paper-wrap{padding:1.2rem clamp(.6rem,2vw,1.6rem) 2rem;animation:page-in .55s var(--ease) both}' +
+    '\n#reader{max-width:60rem;margin:0 auto;border-radius:14px;box-shadow:0 24px 50px -30px var(--shadow);min-height:60vh}' +
+    '\n#reader.wide,.shell.full #reader{max-width:none}' +
+    '\n.zoom{display:inline-flex;align-items:center;gap:.25rem}.zoom span{min-width:3.2rem;text-align:center;color:var(--soft);font-size:12.5px;font-variant-numeric:tabular-nums;cursor:pointer}' +
+    '\n#reader>article{padding:1.4rem clamp(1rem,3vw,2.4rem) 3rem}' +
     '\nbody.lib-shelf .ask-orb,body.lib-shelf .ask-panel,body.lib-shelf .ask-quote-fab{display:none!important}' +
+    '\n.lib-note{padding:1rem 1.3rem;color:var(--muted)}' +
     '\n' + scoped(notesCss) + '\n' + scoped(NOTES_CSS) + '\n' + VISUAL_CSS;
   document.head.append(style);
   document.body.innerHTML = shell.body;
   document.body.classList.add('lib-shelf');
   document.body.append(Object.assign(el('script'), { type: 'application/json', id: 'lib-data', textContent: shell.json }));
+  const toastUi = text => { sync.textContent = text; window.__v2sLibrary?.toast(text); };
 
   // the reader and its toolbar are built once and reused for every lecture, so opening another one allocates nothing new
   const out = el('article', { id: 'out' });
   const reader = el('div', { id: 'reader' }, out);
-  const edit = el('button', { type: 'button', class: 'chip', title: 'Edit the text and move or remove the figures', text: 'Edit notes' });
-  const undo = el('button', { type: 'button', class: 'chip', text: 'Undo', hidden: '' });
-  const redo = el('button', { type: 'button', class: 'chip', text: 'Redo', hidden: '' });
-  const sync = el('span', { class: 'lib-sync', role: 'status' });
-  const tools = el('div', { class: 'lib-tools' }, edit, undo, redo, sync);
-  const toast = text => { sync.textContent = text; };
-  const view = createNotesView({ out, toast });
+  const wrap = el('div', { class: 'paper-wrap' }, reader);
+  const btn = (text, title) => el('button', { type: 'button', class: 'chip', text, title });
+  const edit = btn('Edit notes', 'Edit the text and move or remove the figures');
+  const undo = btn('Undo'); undo.hidden = true;
+  const redo = btn('Redo'); redo.hidden = true;
+  const repair = btn('Fix formatting', 'Repair common Markdown and LaTeX problems');
+  const practice = btn('Generate practice paper'); practice.hidden = true;
+  const sync = el('span', { class: 'note', role: 'status' });
+  // zoom and width: read small print comfortably, or let the notes use the whole window (also ctrl + scroll over the notes)
+  const ZOOM = 'vid2study:zoom';
+  let zoom = Number(localStorage.getItem(ZOOM)) || 1, wide = localStorage.getItem(ZOOM + ':wide') === '1';
+  const zoomOut = btn('−', 'Zoom out'), zoomIn = btn('+', 'Zoom in'), zoomLabel = el('span', { title: 'Reset the zoom' }), wideBtn = btn('Wide', 'Use the whole width of the window');
+  const applyZoom = () => {
+    zoom = Math.min(2.5, Math.max(0.6, Math.round(zoom * 100) / 100));
+    reader.style.zoom = String(zoom);
+    zoomLabel.textContent = Math.round(zoom * 100) + '%';
+    reader.classList.toggle('wide', wide); wideBtn.classList.toggle('on', wide);
+    try { localStorage.setItem(ZOOM, String(zoom)); localStorage.setItem(ZOOM + ':wide', wide ? '1' : '0'); } catch { /* storage off: the zoom lasts until you leave */ }
+  };
+  zoomOut.addEventListener('click', () => { zoom -= 0.1; applyZoom(); });
+  zoomIn.addEventListener('click', () => { zoom += 0.1; applyZoom(); });
+  zoomLabel.addEventListener('click', () => { zoom = 1; applyZoom(); });
+  wideBtn.addEventListener('click', () => { wide = !wide; applyZoom(); });
+  reader.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); zoom += e.deltaY < 0 ? 0.1 : -0.1; applyZoom(); }, { passive: false });
+  applyZoom();
+  const tools = el('div', { class: 'toolbar' }, edit, undo, redo, repair, practice, sync, el('span', { class: 'zoom' }, zoomOut, zoomLabel, zoomIn, wideBtn));
+  const view = createNotesView({ out, toast: toastUi });
   view.wireEditBar({ edit, undo, redo });
+  mountNotesTools({ view, repair, practice, toast: toastUi });
 
-  // keep the lecture's file in step with edits: one rebuild, a few seconds after the last change, never on open
-  let opening = false, timer = 0, writing = Promise.resolve();
+  // keep a LIBRARY lecture's file in step with edits: one rebuild, a few seconds after the last change, never on open
+  let opening = false, inLibrary = false, timer = 0, writing = Promise.resolve();
   const writeBack = async () => {
     const result = view.result;
-    if (!result || !root) return;
+    if (!result || !root || !inLibrary) return;
     sync.textContent = 'Updating the library file…';
     try {
       const html = await buildStandaloneHtml({ result, images: view.images, interactive: true, ...LECTURE_LINKS });
@@ -88,31 +115,36 @@ async function mount(entries, ids) {
     } catch (error) { sync.textContent = 'Could not update the library file: ' + (error.message || error); }
   };
   view.store.subscribe(() => {
-    if (opening || !view.result) return;
+    if (opening || !view.result || !inLibrary) return;
     sync.textContent = 'Edited. The library file updates in a moment.';
     clearTimeout(timer);
     timer = setTimeout(() => { writing = writing.then(writeBack); }, SYNC_DELAY);
   });
 
   let token = 0, fallback = null;
+  /** Show the notes view for `key` in `stage`. Resolves to the opened result, or null when this browser has no such saved notes. */
+  async function show(key, stage, library) {
+    const mine = ++token;
+    document.body.classList.remove('lib-shelf');
+    stage.replaceChildren(el('p', { class: 'lib-note', text: 'Opening…' }));
+    await writing; // never switch lecture in the middle of a write-back
+    opening = true; inLibrary = library;
+    let result = null;
+    try { result = key ? await view.open(key) : null; } finally { opening = false; }
+    if (mine !== token) return undefined; // the reader moved on while this was loading
+    if (result) {
+      sync.textContent = library ? '' : 'Saved notes: edits are saved in this browser only.';
+      edit.textContent = 'Edit notes'; edit.classList.remove('on'); edit.setAttribute('aria-pressed', 'false'); undo.hidden = redo.hidden = true;
+      stage.replaceChildren(tools, wrap);
+      dispatchEvent(new Event('resize')); // the assistant re-docks beside the notes
+    }
+    return result;
+  }
+
   window.__v2sHost = {
     async open(entry, stage) {
-      const mine = ++token;
-      document.body.classList.remove('lib-shelf');
-      stage.replaceChildren(el('p', { class: 'lib-note', text: 'Opening…' }));
-      await writing; // never switch lecture in the middle of a write-back
-      const key = ids.get(entry.id);
-      opening = true;
-      let result = null;
-      try { result = key ? await view.open(key) : null; } finally { opening = false; }
-      if (mine !== token) return; // the reader moved on while this was loading
-      if (result) {
-        sync.textContent = '';
-        edit.textContent = 'Edit notes'; edit.classList.remove('on'); edit.setAttribute('aria-pressed', 'false'); undo.hidden = redo.hidden = true;
-        stage.replaceChildren(tools, reader);
-        dispatchEvent(new Event('resize')); // the assistant re-docks beside the notes
-        return;
-      }
+      const result = await show(ids.get(entry.id), stage, true);
+      if (result !== null) return;
       // not in this browser's saved notes (a library copied from elsewhere): show the file, read-only
       document.body.classList.add('lib-shelf');
       try {
@@ -128,6 +160,14 @@ async function mount(entries, ids) {
       fallback?.remove(); fallback = null;
       document.body.classList.add('lib-shelf');
       document.body.classList.remove('ask-docked');
+    },
+    notes: {
+      list: () => listSavedNotes().then(items => items.map(item => ({ ...item, sub: item.sub }))),
+      async open(item, stage, setTitle) {
+        const result = await show(item.key, stage, false);
+        if (result) setTitle?.(result.title);
+        else if (result === null) stage.replaceChildren(el('p', { class: 'lib-note', text: 'These notes are no longer saved in this browser.' }));
+      }
     }
   };
   document.body.append(Object.assign(el('script'), { src: 'lib/library-ui.js' }));
@@ -140,6 +180,7 @@ $('reopen').addEventListener('click', async () => {
   if (!(await ensureAccess(remembered))) { say('Access to the folder was not allowed. Choose it again.'); return; }
   await begin(remembered);
 });
+$('notesOnly').addEventListener('click', () => begin(null));
 $('choose').addEventListener('click', async () => {
   try {
     const handle = await window.showDirectoryPicker({ id: 'vid2study-library', mode: 'readwrite' });

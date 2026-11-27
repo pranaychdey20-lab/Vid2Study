@@ -166,3 +166,12 @@ console.log('notes edit ok');
   assert.ok(!cut.content.includes('"clip":99'));
   assert.equal(contentProblem(cut.content), null);
 }
+
+// chat answers: the reasons a visual was rejected are returned so the model can be told
+{
+  const F3 = '\x60'.repeat(3);
+  const cut = withoutBadVisuals('Intro.\n\n' + F3 + 'visual\n{"type":"warp_drive"}\n' + F3 + '\n\nOutro.');
+  assert.equal(cut.removed, 1);
+  assert.match(cut.reasons[0], /unknown type "warp_drive"/);
+  assert.ok(cut.content.includes('Intro.') && cut.content.includes('Outro.'));
+}

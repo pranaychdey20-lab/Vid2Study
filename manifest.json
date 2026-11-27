@@ -46,10 +46,6 @@
     {
       "resources": ["content.css", "results.html", "pager.html"],
       "matches": ["<all_urls>"]
-    },
-    {
-      "resources": ["library-open.html"],
-      "matches": ["file:///*"]
     }
   ]
 }
