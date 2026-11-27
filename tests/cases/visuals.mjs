@@ -17,6 +17,7 @@ for (const bad of ['process.exit()', 'constructor', 'x.y', '__proto__', 'alert(1
 
 // ---- every example in the writer guide must be a real, drawable visual
 const SAMPLES = {
+  image_lab: [{ scene: 'low_contrast', ops: ['clahe'], histogram: true, pixels: { x: 40, y: 40, size: 4 } }, { scene: 'window', ops: ['blur', 'highpass'], profile: true }, { scene: 'landscape', ops: [{ op: 'gamma', gamma: 0.5 }, 'equalize', 'sharpen'], chain: true }, { scene: 'sine', freq: 3, ops: ['laplacian'], profile: true, pixels: true }],
   histogram: [{ values: [0, 50, 100, 150], frequencies: [3, 3, 4, 2] }, { data: [1, 2, 2, 3, 3, 3, 9], bins: 4 }, { pixels: [10, 20, 200, 250] }],
   equation_steps: [{ steps: ['a=b+c', { tex: 'a-c=b', note: 'subtract c' }] }],
   matrix: [{ matrix: [[1, 2], [3, 4]], highlight: [[0, 1]] }],
@@ -80,7 +81,7 @@ assert.ok(covered.size >= 38, 'registry covers ' + covered.size + ' types');
 
 // every type named in the guide exists (the guide is what the writer is told)
 for (const [, name] of VISUAL_GUIDE.matchAll(/(?:^|\| |: )([a-z_]+)\{/gm)) assert.ok(VISUAL_TYPES.includes(name), 'guide names unknown type ' + name);
-assert.ok(VISUAL_GUIDE.length < 5200, 'guide stays compact (' + VISUAL_GUIDE.length + ' chars)');
+assert.ok(VISUAL_GUIDE.length < 6000, 'guide stays compact (' + VISUAL_GUIDE.length + ' chars)');
 const example = /Example: (\{.*\})/.exec(VISUAL_GUIDE)[1];
 assert.ok(readVisual(example), 'guide example is valid');
 
@@ -146,3 +147,21 @@ assert.match(body.innerHTML, /--shade:64/, 'initial draw uses the slider value 2
 listeners.find(([type]) => type === 'input')[1]();
 assert.match(body.innerHTML, /study-pixels/);
 console.log('visuals ok:', covered.size, 'types');
+
+// ---- image lab: the algorithms really run
+{
+  const labHtml = renderVisual('{"type":"image_lab","scene":"low_contrast","ops":[{"op":"clahe","clip":4,"tiles":4}]}', false);
+  const spread = /Contrast .spread. before → after<.dt><dd>([0-9.]+) → ([0-9.]+)/.exec(labHtml);
+  assert.ok(spread && Number(spread[2]) > Number(spread[1]) * 2, 'CLAHE raises the contrast of a low-contrast picture: ' + (spread && spread[0]));
+  assert.match(labHtml, /<img alt="Original" src="data:image.bmp;base64,Qk/);
+  const eq = renderVisual('{"type":"image_lab","scene":"dark","ops":["equalize"]}', false);
+  const m = /Mean brightness before → after<.dt><dd>([0-9.]+) → ([0-9.]+)/.exec(eq);
+  assert.ok(m && Number(m[2]) > Number(m[1]) * 1.5, 'equalisation brightens a dark picture');
+  const g = renderVisual('{"type":"image_lab","scene":"gradient","ops":[{"op":"gamma","gamma":0.5}]}', true);
+  assert.match(g, /name="p0"/, 'the first operation gets a slider');
+  assert.equal(readVisual('{"type":"image_lab","scene":"nowhere","ops":["clahe"]}'), null);
+  assert.equal(readVisual('{"type":"image_lab","scene":"window","ops":["teleport"]}'), null);
+  assert.equal(readVisual('{"type":"image_lab","scene":"window","ops":[{"op":"clahe","clip":99}]}'), null);
+  assert.equal(readVisual('{"type":"image_lab","scene":"window","ops":["blur","blur","blur","blur"]}'), null);
+  assert.equal(readVisual('{"type":"image_lab","scene":"window","ops":["blur"],"pixels":{"x":95,"y":0,"size":5}}'), null);
+}
