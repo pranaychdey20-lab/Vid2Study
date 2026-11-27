@@ -3,7 +3,7 @@ import { Script } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { completeWriterPrefix, emptyTopics, missingScreenTopics, unmatchedCoverage } from './lib/coverage.js';
 import { renderMarkdown } from './lib/md.js';
-import { libraryIndex, libraryLocation, saveLibraryLecture, lectureId, readLibraryManifest } from './lib/textbook-library.js';
+import { libraryIndex, libraryLocation, saveLibraryLecture, lectureId, readLibraryManifest, LECTURE_LINKS } from './lib/textbook-library.js';
 import { libraryShell } from './lib/library-page.js';
 import { readVisual, transformedPixels, visualRuntime } from './lib/textbook-visuals.js';
 
@@ -100,14 +100,19 @@ assert.equal(JSON.parse(dir.files.get('Vid2Study-library.json')).entries.length,
   assert.match(page, /<script src="\.vid2study\/library\.js"><\/script>/);
   assert.doesNotMatch(page, /<script>[^<]*function/, 'the page no longer embeds the script');
   assert.equal(dir.children.get('.vid2study').files.get('library.js'), shelfScript);
-  assert.match(page, new RegExp('href="chrome-extension://' + id + '/library-open\\.html"'));
-  assert.doesNotMatch(libraryIndex([{ subject: 's', module: 'm', category: 'c', title: 't', path: ['s', 'm', 'c', 'n.html'] }]), /chrome-extension/, 'no extension button without an id');
+  assert.ok(page.includes('chrome-extension://' + id + '/library-open.html'), 'the data carries the assistant address (the page copies it: a file page cannot link to an extension)');
+  assert.doesNotMatch(page, /<a[^>]+href="chrome-extension/, 'no link that a file page would be blocked from opening');
+  assert.doesNotMatch(libraryIndex([{ subject: 's', module: 'm', category: 'c', title: 't', path: ['s', 'm', 'c', 'n.html'] }]), /chrome-extension/, 'no assistant address without an id');
   assert.doesNotMatch(libraryIndex([], { extensionId: '../../x' }), /chrome-extension/, 'a bad id is ignored');
   assert.equal((await lectureId('first')).length, 16);
   assert.equal(await lectureId('first'), JSON.parse(dir.files.get('Vid2Study-library.json')).entries.find(e => e.title === 'Histogram stretching').id);
   assert.equal((await readLibraryManifest(dir)).length, 3);
   assert.deepEqual(await readLibraryManifest(new Directory('empty')), []);
+  // a lecture sits three folders below the library root, so its links climb exactly three levels
+  assert.deepEqual(LECTURE_LINKS, { back: '../../../Vid2Study.html', shared: '../../../.vid2study/visuals.js' });
+  const depth = (await readLibraryManifest(dir))[0].path.length - 1;
+  assert.equal(LECTURE_LINKS.back.split('../').length - 1, depth, 'the back link climbs as many levels as the lecture is deep');
   const shell = libraryShell((await readLibraryManifest(dir)));
-  assert.ok(shell.css.includes('.app') && shell.body.startsWith('<div class="app">') && JSON.parse(shell.json).entries.length === 3);
+  assert.ok(shell.css.includes('.shell') && shell.body.includes('id="shell"') && JSON.parse(shell.json).entries.length === 3);
   assert.ok(!shell.body.includes('<script'), 'the shell carries no script of its own');
 }

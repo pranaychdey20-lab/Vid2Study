@@ -3,14 +3,13 @@
  * IndexedDB, renders them (KaTeX math, callouts, step diagrams), and handles
  * copy / zip bundle / printable view.
  */
-import { getResult, putResult } from './lib/db.js';
-import { loadSettings } from './lib/settings.js';
 import { writerLabel } from './lib/lecture-layout.js';
 import { makeZip } from './lib/zip.js';
 import { nativeBridge } from './lib/llm.js';
-import { fmtTime, sanitizeName, toCopyText, lectureLockName, PROCESSING_LOCK } from './lib/common.js';
+import { fmtTime, sanitizeName, toCopyText } from './lib/common.js';
 import { VISUAL_CSS, visualRuntime } from './lib/textbook-visuals.js';
-import { createNotesView, NOTES_CSS, renderMath } from './lib/notes-view.js';
+import { createNotesView, NOTES_CSS } from './lib/notes-view.js';
+import { mountNotesTools } from './lib/notes-tools.js';
 import { buildStandaloneHtml as buildHtml } from './lib/standalone-html.js';
 import { loadLook, applyLook } from './lib/ui-theme.js';
 applyLook(loadLook()); // the look the assistant saved (colours, type, motion), before the notes are drawn
@@ -21,8 +20,7 @@ const previewView = (params.get('preview') === '1' || params.get('print') === '1
 const offerPractice = params.get('practice') === '1';
 const $ = (id) => document.getElementById(id);
 let result = null;
-let paperJob = null;
-let repairJob = null;
+let tools = null;
 const tokens = () => (result?.usage ? ` · ${result.usage.in + result.usage.out} tokens` : '');
 const view = createNotesView({
   out: $('out'), toast: msg => toast(msg),
@@ -30,10 +28,6 @@ const view = createNotesView({
 });
 /** filename -> Blob of the open lecture (owned by the view, which frees it) */
 const images = view.images;
-const openPractice = () => {
-  $('paperStatus').textContent = '';
-  $('paperDialog').showModal();
-};
 
 
 function toast(msg) {
@@ -160,79 +154,12 @@ async function init() {
   if (!result) { $('status').textContent = 'No saved summary for this lecture yet.'; return; }
   $('debug').hidden = !result.debug; // TEMP DEBUG
   if (previewView) document.body.classList.add('wide-preview');
-  $('practice').hidden = !(await loadSettings()).practiceQuestions;
+  tools = mountNotesTools({ view, repair: $('repair'), practice: $('practice'), toast });
+  await tools.refreshPractice();
   document.title = result.title;
   $('status').remove();
   view.wireEditBar({ edit: $('editNotes'), undo: $('undoEdit'), redo: $('redoEdit') });
   if (previewView && params.get('save') === 'html') openHtmlDialog();
-
-  $('repair').addEventListener('click', async () => {
-    if (repairJob) return;
-    repairJob = new AbortController();
-    const { signal } = repairJob;
-    const button = $('repair');
-    button.disabled = true;
-    button.textContent = 'Checking formatting…';
-    const withNotesLock = work => navigator.locks.request(PROCESSING_LOCK, { mode: 'shared', signal }, () =>
-      navigator.locks.request(lectureLockName(key), { signal }, work));
-    try {
-      if (!window.katex) throw new Error('The math renderer did not load.');
-      const { repairFormatting, repairWithCheapAi, applyRawRepairs, AI_REPAIR_LIMIT } = await import('./lib/repair-formatting.js');
-      const validMath = (tex, display) => !!renderMath(tex, display);
-      let review, raw;
-      result = await withNotesLock(async () => {
-        const saved = await getResult(key);
-        if (!saved) throw new Error('These notes are no longer saved.');
-        review = repairFormatting(saved.summary_markdown, validMath);
-        raw = repairFormatting(saved.summary_raw ?? saved.summary_markdown, validMath);
-        if (!review.repairs && !raw.repairs) return saved;
-        const fixed = { ...saved, summary_markdown: review.markdown, summary_raw: raw.markdown };
-        await putResult(fixed);
-        return fixed;
-      });
-      draw();
-      if (!review.issues.length) {
-        toast(review.repairs || raw.repairs ? 'Formatting fixes saved' : 'No formatting problems found');
-        return;
-      }
-      const dialog = $('repairDialog');
-      const count = review.issues.length;
-      const sent = Math.min(count, AI_REPAIR_LIMIT);
-      $('repairDetails').textContent = count + (count === 1 ? ' passage needs' : ' passages need') +
-        ' review. Send ' + sent + (sent === 1 ? ' passage' : ' passages') + ' and nearby lines to your Cheap AI?';
-      dialog.returnValue = 'no';
-      const approved = await new Promise(resolve => {
-        dialog.addEventListener('close', () => resolve(dialog.returnValue === 'yes'), { once: true });
-        dialog.showModal();
-      });
-      if (!approved) { toast('Local scan complete. Unresolved passages were kept.'); return; }
-      button.textContent = 'Checking with Cheap AI…';
-      result = await withNotesLock(async () => {
-        const saved = await getResult(key);
-        if (saved?.summary_markdown !== review.markdown || saved?.summary_raw !== result.summary_raw) {
-          throw new Error('The notes changed. Run Fix formatting again.');
-        }
-        const { markdown: fixed, accepted } = await repairWithCheapAi(review, await loadSettings(), validMath, signal);
-        signal.throwIfAborted();
-        const changes = fixed !== review.markdown;
-        const remaining = repairFormatting(fixed, validMath).issues.length;
-        if (!changes) { toast('No safe AI formatting fixes were found.'); return saved; }
-        const summary_raw = saved.summary_raw === saved.summary_markdown ? fixed : applyRawRepairs(saved.summary_raw, accepted);
-        const updated = { ...saved, summary_markdown: fixed, summary_raw };
-        if (!await getResult(key)) throw new Error('These notes are no longer saved.');
-        await putResult(updated);
-        toast(remaining ? remaining + ' passages still need review' : 'Formatting fixes saved');
-        return updated;
-      });
-      draw();
-    } catch (error) {
-      if (!signal.aborted) toast(error.message || String(error));
-    } finally {
-      repairJob = null;
-      button.disabled = false;
-      button.textContent = 'Fix formatting';
-    }
-  });
 
   $('out').addEventListener('click', (e) => {
     if (e.target.tagName !== 'IMG') return;
@@ -241,57 +168,7 @@ async function init() {
     $('lb').hidden = false;
   });
   $('lb').addEventListener('click', (e) => { if (e.target.id !== 'lbopen') $('lb').hidden = true; });
-  $('paperForm').addEventListener('submit', async event => {
-    event.preventDefault();
-    if (paperJob) return;
-    const withAssignments = $('useAssignments').value === 'yes';
-    const text = withAssignments ? $('assignmentText').value : '';
-    const files = withAssignments ? [...$('assignmentFiles').files] : [];
-    const status = $('paperStatus');
-    if (withAssignments && !text.trim() && !files.length) {
-      status.textContent = 'Paste questions or attach at least one screenshot.';
-      return;
-    }
-    paperJob = new AbortController();
-    const { signal } = paperJob;
-    $('paperSubmit').disabled = true;
-    $('paperCancel').textContent = 'Cancel generation';
-    status.textContent = 'Preparing the practice paper';
-    try {
-      const { writePracticePaper, appendPracticePaper } = await import('./lib/practice-paper.js');
-      result = await navigator.locks.request(PROCESSING_LOCK, { mode: 'shared', signal }, () =>
-        navigator.locks.request(lectureLockName(key), { signal }, async () => {
-        const saved = await getResult(key);
-        if (!saved) throw new Error('These notes are no longer saved.');
-        const paper = await writePracticePaper(saved, await loadSettings(), {
-          text, files, signal, onWait: value => { status.textContent = value; },
-          prepareNotesPdf: markdown => {
-            status.textContent = 'Preparing the combined notes for PDF attachment';
-            return buildStandaloneHtml(markdown);
-          }
-        });
-        signal.throwIfAborted();
-        const addPaper = markdown => appendPracticePaper(markdown, paper);
-        const updated = { ...saved, summary_markdown: addPaper(saved.summary_markdown), summary_raw: addPaper(saved.summary_raw) };
-        // Full deletion can happen from a second Saved notes tab during generation.
-        if (!await getResult(key)) throw new Error('These notes are no longer saved.');
-        await putResult(updated);
-        return updated;
-      }));
-      draw();
-      $('paperDialog').close();
-      $('paperForm').reset();
-      $('assignmentInputs').hidden = true;
-      toast('Practice paper saved');
-    } catch (error) {
-      status.textContent = signal.aborted ? 'Practice paper cancelled.' : error.message || String(error);
-    } finally {
-      paperJob = null;
-      $('paperSubmit').disabled = false;
-      $('paperCancel').textContent = 'Not now';
-    }
-  });
-  if (offerPractice && !$('practice').hidden && !/^##[ \t]+Practice questions(?: — Paper \d+)?[ \t]*$/im.test(result.summary_markdown)) openPractice();
+  if (offerPractice && !$('practice').hidden && !/^##[ \t]+Practice questions(?: — Paper \d+)?[ \t]*$/im.test(result.summary_markdown)) tools.openPractice();
 }
 
 $('copy').addEventListener('click', () => result && copyText());
@@ -354,13 +231,6 @@ $('debug').addEventListener('click', () => {
   window.open(URL.createObjectURL(new Blob([result.debug], { type: 'text/plain;charset=utf-8' })), '_blank');
 });
 $('print').addEventListener('click', () => result && savePdf().catch(e => toast(e.message)));
-$('practice').addEventListener('click', openPractice);
-$('useAssignments').addEventListener('change', () => { $('assignmentInputs').hidden = $('useAssignments').value !== 'yes'; });
-$('paperCancel').addEventListener('click', () => {
-  if (paperJob) paperJob.abort();
-  else $('paperDialog').close();
-});
-$('paperDialog').addEventListener('cancel', event => { if (paperJob) { event.preventDefault(); paperJob.abort(); } });
-addEventListener('pagehide', () => { paperJob?.abort(); repairJob?.abort(); view.release(); });
+addEventListener('pagehide', () => { tools?.abort(); view.release(); });
 
 init().catch((e) => { $('status').textContent = `Could not load summary: ${e.message}`; });
