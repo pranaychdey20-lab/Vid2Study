@@ -190,3 +190,8 @@ body.ask-docked { padding-right: var(--ask-w, 420px); }
 .v2s-flash { outline: 3px solid #ff8a00 !important; outline-offset: 3px !important; animation: v2s-flash .7s ease-in-out 4 !important; }
 @keyframes v2s-flash { 50% { outline-color: rgb(255 138 0 / .25); } }
 @media (prefers-reduced-motion: reduce) { .v2s-flash { animation: none !important; } }
+
+/* illustrations inside chat answers */
+.ask-msg.bot .study-visual { margin: .7rem 0; max-width: 100%; overflow-x: auto; font-size: 13px; }
+.ask-msg.bot .study-visual figcaption { font-size: 13.5px; }
+.ask-msg.bot img { max-width: 100%; height: auto; }
